@@ -38,6 +38,7 @@ def run_experiment(
     algorithm:   str,   # "baseline" | "fedrep_linear" | "fedrep_nonlinear"
     aggregator:  str,
     attack:      str,
+    loss_type:   str   = "cross_entropy",
     # ── model / training ──────────────────────────────────
     repr_dim:    int   = 256,
     head_steps:  int   = 10,
@@ -54,6 +55,7 @@ def run_experiment(
     attack_kwargs: dict = None,
     verbose:     bool  = True,
     use_leaf:    bool  = False,
+    global_probe: bool = False,
 ) -> ExperimentResult:
     """
     Full training loop for one experiment configuration.
@@ -62,12 +64,13 @@ def run_experiment(
     """
     set_seed(seed)
     attack_kwargs = attack_kwargs or {}
-    meta = DATASET_META[dataset]
+    task = DATASET_META[dataset].get("task", "classification")
 
     if verbose:
         print(f"\n{'='*70}")
         print(f"  Dataset: {dataset}  |  α={alpha}  |  n={n_clients}  |  f={n_byzantine}")
-        print(f"  Algorithm: {algorithm}  |  Aggregator: {aggregator}  |  Attack: {attack}")
+        print(f"  Algorithm: {algorithm}  |  Loss: {loss_type}  |  "
+              f"Aggregator: {aggregator}  |  Attack: {attack}")
         print(f"{'='*70}")
 
     # ── Data ─────────────────────────────────────────────────────────────────
@@ -76,19 +79,26 @@ def run_experiment(
     if verbose:
         print(f"  [1/4] Downloading / loading {dataset} data ...", flush=True)
 
+    n_hon = n_clients - n_byzantine
     client_loaders, client_test_loaders, test_loader = get_loaders(
-        dataset, n_clients, alpha,
+        dataset, n_hon, alpha,
         data_dir=data_dir, batch_size=batch_size, seed=seed,
         use_leaf=use_leaf
     )
+    if len(client_loaders) != n_hon or len(client_test_loaders) != n_hon:
+        raise ValueError(
+            f"Expected {n_hon} honest client loaders, received "
+            f"{len(client_loaders)} train and {len(client_test_loaders)} test."
+        )
+    meta = DATASET_META[dataset]
 
     if verbose:
         sizes = [len(ld.dataset) for ld in client_loaders]
-        print(f"        {n_clients - n_byzantine} honest clients | "
+        print(f"        {n_hon} honest clients | "
               f"samples/client: min={min(sizes)} max={max(sizes)}")
         print(f"  [2/4] Computing heterogeneity score ...", flush=True)
 
-    het_score = heterogeneity_score(client_loaders, meta["n_classes"])
+    het_score = heterogeneity_score(client_loaders, meta["n_classes"], task=task)
 
     if verbose:
         print(f"        Heterogeneity score: {het_score:.4f}  "
@@ -113,7 +123,7 @@ def run_experiment(
             dataset=dataset, n_clients=n_clients, n_byzantine=n_byzantine,
             aggregator=agg, attack=atk, repr_dim=repr_dim,
             lr=lr, momentum=momentum, linear=False,
-            device=str(device_obj),
+            device=str(device_obj), loss_type=loss_type,
         )
         trainer.client_test_loaders = client_test_loaders
     elif algorithm in ("fedrep_linear", "fedrep_nonlinear"):
@@ -122,7 +132,7 @@ def run_experiment(
             aggregator=agg, attack=atk, repr_dim=repr_dim,
             lr_backbone=lr, lr_head=lr_head, head_steps=head_steps,
             momentum=momentum, linear=linear,
-            device=str(device_obj),
+            device=str(device_obj), loss_type=loss_type,
         )
         trainer.client_loaders = client_loaders
         trainer.client_loaders      = client_loaders
@@ -142,11 +152,11 @@ def run_experiment(
         dataset=dataset, n_clients=n_clients, n_byzantine=n_byzantine,
         alpha=alpha, aggregator=aggregator, attack=attack,
         algorithm=algorithm, repr_dim=repr_dim, head_steps=head_steps, seed=seed,
+        loss_type=loss_type, task=task,
+        het_score=het_score,
     )
 
     timer = Timer()
-    n_hon = n_clients - n_byzantine
-
     if verbose:
         print(f"\n  Starting training: {rounds} rounds, "
               f"evaluating every {eval_every} rounds")
@@ -161,10 +171,9 @@ def run_experiment(
             print(f"  round {rnd:4d}/{rounds} — training ...", end="\r", flush=True)
 
         train_info = trainer.train_round(client_loaders)
+        result.add_train(rnd, train_info["loss"], timer.elapsed())
 
-        early_eval = rnd <= 500 and rnd % 10 == 0
-        late_eval  = rnd > 500 and rnd % eval_every == 0
-        if early_eval or late_eval or rnd == rounds:
+        if rnd % eval_every == 0 or rnd == rounds:
             if algorithm == "baseline":
                 eval_info = trainer.evaluate(
                     test_loader,
@@ -172,18 +181,24 @@ def run_experiment(
                     head_steps=head_steps,
                     lr_head=lr_head,
                 )
-                global_info = trainer.evaluate(test_loader)
+                global_info = (trainer.evaluate_global(test_loader)
+                               if global_probe else eval_info)
             else:
                 eval_info = trainer.evaluate(test_loader)
-                global_info = trainer.evaluate_global(test_loader)
+                global_info = (trainer.evaluate_global(test_loader)
+                               if global_probe else eval_info)
 
             rec = RoundRecord(
                 round      = rnd,
                 train_loss = train_info["loss"],
-                test_acc   = eval_info["test_acc"],
+                test_acc   = eval_info.get("test_acc"),
                 test_loss  = eval_info["test_loss"],
                 wall_time  = timer.elapsed(),
-                global_acc = global_info["test_acc"],   # ← add this
+                global_acc = global_info.get("test_acc"),
+                metric_name = eval_info["metric_name"],
+                metric_value = eval_info["metric_value"],
+                global_loss = global_info.get("test_loss"),
+                global_metric_value = global_info.get("metric_value"),
             )
             result.add(rec)
 
@@ -196,13 +211,13 @@ def run_experiment(
                 print(
                     f"  [{bar}] {rnd:4d}/{rounds}  |  "
                     f"loss={rec.train_loss:.3f}  |  "
-                    f"pers={rec.test_acc*100:5.1f}%  |  "
-                    f"global={global_info['test_acc']*100:5.1f}%  |  "
+                    f"{rec.metric_name}={rec.metric_value:.4f}  |  "
+                    f"global_loss={global_info['test_loss']:.4f}  |  "
                     f"t={rec.wall_time:.0f}s  ETA {eta_str}"
                 )
 
     if verbose:
-        print(f"\n  ✓ Done — best={result.best_acc*100:.2f}%  "
-              f"final={result.final_acc*100:.2f}%\n")
+        print(f"\n  ✓ Done — best {result.history[-1].metric_name}="
+              f"{result.best_metric:.4f}, final={result.final_metric:.4f}\n")
 
     return result
