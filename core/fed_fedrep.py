@@ -45,6 +45,7 @@ from typing import Dict, List, Optional, Tuple
 from core.models      import FedModel, build_model, get_flat, set_flat, get_flat_grad
 from core.aggregators import RobustAggregator, ByzantineAttack
 from core.datasets    import DATASET_META
+from core.objectives  import TaskObjective, evaluate_model
 
 
 class FedRep:
@@ -85,6 +86,7 @@ class FedRep:
         momentum:     float = 0.9,
         linear:       bool  = False,
         device:       str   = "cpu",
+        loss_type:    str   = "cross_entropy",
     ):
         assert n_byzantine < n_clients / 2
         meta = DATASET_META[dataset]
@@ -100,6 +102,7 @@ class FedRep:
         self.momentum    = momentum
         self.device      = torch.device(device)
         self.n_classes   = meta["n_classes"]
+        self.task        = meta.get("task", "classification")
         self.client_loaders = None  # set externally after construction
         self.client_test_loaders = None  # set externally
 
@@ -124,7 +127,7 @@ class FedRep:
             for _ in range(self.n_honest)
         ]
 
-        self.criterion = nn.CrossEntropyLoss()
+        self.criterion = TaskObjective(self.task, loss_type, meta["n_classes"])
         self.round = 0
 
     # ── helpers ───────────────────────────────────────────────────────────────
@@ -225,7 +228,6 @@ class FedRep:
         self._set_backbone_flat(new_bb)
 
         self.round += 1
-        mean_gnorm = float(torch.stack([v.norm() for v in honest_momenta]).mean())
         return {"loss": float(sum(ce_losses) / len(ce_losses))}
 
     # ── evaluation ────────────────────────────────────────────────────────────
@@ -250,29 +252,26 @@ class FedRep:
                 self.criterion(cm(x), y).backward()
                 opt.step()
             cm.eval()
-            correct = total = 0
-            total_loss = 0.0
-            with torch.no_grad():
-                for x, y in self.client_test_loaders[i]:
-                    x, y = x.to(self.device), y.to(self.device)
-                    logits = cm(x)
-                    total_loss += self.criterion(logits, y).item() * y.size(0)
-                    correct += (logits.argmax(1) == y).sum().item()
-                    total += y.size(0)
-            client_accs.append(correct / total)
-            client_losses.append(total_loss / total)
+            metrics = evaluate_model(cm, self.client_test_loaders[i],
+                                     self.criterion, self.device)
+            client_accs.append(metrics["metric_value"])
+            client_losses.append(metrics["test_loss"])
             for p in cm.parameters(): p.requires_grad_(True)
-        return {"test_acc": float(sum(client_accs)/len(client_accs)),
-                "test_loss": float(sum(client_losses)/len(client_losses))}
+        value = float(sum(client_accs)/len(client_accs))
+        out = {"metric_name": "accuracy" if self.task == "classification" else "mse",
+               "metric_value": value,
+               "test_loss": float(sum(client_losses)/len(client_losses))}
+        out["test_acc" if self.task == "classification" else "test_mse"] = value
+        return out
     
     def evaluate_global(
         self,
         test_loader: DataLoader,
     ) -> Dict[str, float]:
         """
-        Global evaluation: freeze backbone, train a fresh head
-        on the full test set for head_steps steps, then evaluate.
-        Measures backbone quality independently of any client head.
+        Global evaluation: freeze the backbone, fit a fresh head on the union
+        of honest training sets, and evaluate it on held-out global test data.
+        This measures backbone quality without fitting on the test set.
         """
         probe = copy.deepcopy(self.client_models[0])
         set_flat(probe.backbone.parameters(), self._backbone_flat().clone())
@@ -284,28 +283,20 @@ class FedRep:
             torch.nn.init.xavier_uniform_(p) if p.dim() > 1 else torch.nn.init.zeros_(p)
             p.requires_grad_(True)
 
-        # Train fresh head on full test set
+        # Train a fresh global head on the union of honest *training* sets.
         probe.train()
         opt = torch.optim.SGD(probe.head.parameters(), lr=0.1, momentum=0.9)
-        for _ in range(3):   # 3 epochs over test set
-            for x, y in test_loader:
-                x, y = x.to(self.device), y.to(self.device)
-                opt.zero_grad()
-                loss = self.criterion(probe(x), y)
-                loss.backward()
-                #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                opt.step()
+        for _ in range(3):
+            for train_loader in self.client_loaders:
+                for x, y in train_loader:
+                    x, y = x.to(self.device), y.to(self.device)
+                    opt.zero_grad()
+                    loss = self.criterion(probe(x), y)
+                    loss.backward()
+                    opt.step()
 
-        # Evaluate
-        probe.eval()
-        correct = total = 0
-        with torch.no_grad():
-            for x, y in test_loader:
-                x, y = x.to(self.device), y.to(self.device)
-                correct += (probe(x).argmax(1) == y).sum().item()
-                total   += y.size(0)
-
-        return {"test_acc": correct / total}
+        # Evaluate only on the held-out global test loader.
+        return evaluate_model(probe, test_loader, self.criterion, self.device)
 
     @torch.no_grad()
     def evaluate_per_client(
