@@ -1,0 +1,36 @@
+# configs/default.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Default configuration for a single experiment.
+# Override any value via CLI:
+#   python main.py --dataset cifar10 --alpha 0.1 --rounds 300
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+dataset:     cifar10          # cifar10 | cifar100 | femnist | sent140
+data_dir:    ./data
+alpha:       0.5              # Dirichlet α  (lower = more heterogeneous)
+batch_size:  64
+
+# ── Federated setup ───────────────────────────────────────────────────────────
+n_clients:   10               # total clients (honest + Byzantine)
+n_byzantine: 2                # f  (must be < n_clients / 2)
+
+# ── Algorithm ─────────────────────────────────────────────────────────────────
+algorithm:   fedrep_nonlinear # baseline | fedrep_linear | fedrep_nonlinear
+repr_dim:    256              # shared representation dimension r
+head_steps:  10               # τ_h — local head optimisation steps per round
+
+# ── Aggregator and attack ─────────────────────────────────────────────────────
+aggregator:  NNM+TrMean       # TrMean | Krum | GM | CWMed | NNM+TrMean | NNM+GM
+attack:      SignFlipping     # SignFlipping | InnerProductManipulation | FallOfEmpires | Zero
+
+# ── Training ──────────────────────────────────────────────────────────────────
+rounds:      200
+lr:          0.1              # server / backbone learning rate γ
+lr_head:     0.01             # client head learning rate η_h
+momentum:    0.9              # SHB momentum β
+eval_every:  5                # evaluate test accuracy every N rounds
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+device:      cpu              # cpu | cuda | mps
+seed:        42
+output_dir:  results

@@ -1,0 +1,12 @@
+# Large datasets
+data/
+ISIC_2019_Training_Input.zip
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
