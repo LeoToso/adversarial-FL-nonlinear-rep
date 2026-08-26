@@ -31,15 +31,15 @@ class CNNBackbone(nn.Module):
         self.repr_dim = repr_dim
         self.features = nn.Sequential(
             # block 1
-            nn.Conv2d(in_channels, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(True),
-            nn.Conv2d(32, 64, 3, padding=1),           nn.BatchNorm2d(64), nn.ReLU(True),
+            nn.Conv2d(in_channels, 32, 3, padding=1), nn.GroupNorm(8, 32), nn.ReLU(True),
+            nn.Conv2d(32, 64, 3, padding=1),          nn.GroupNorm(8, 64), nn.ReLU(True),
             nn.MaxPool2d(2, 2),
             # block 2
-            nn.Conv2d(64, 128, 3, padding=1),  nn.BatchNorm2d(128), nn.ReLU(True),
-            nn.Conv2d(128, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(True),
+            nn.Conv2d(64, 128, 3, padding=1),  nn.GroupNorm(16, 128), nn.ReLU(True),
+            nn.Conv2d(128, 128, 3, padding=1), nn.GroupNorm(16, 128), nn.ReLU(True),
             nn.MaxPool2d(2, 2),
             # block 3
-            nn.Conv2d(128, 256, 3, padding=1), nn.BatchNorm2d(256), nn.ReLU(True),
+            nn.Conv2d(128, 256, 3, padding=1), nn.GroupNorm(32, 256), nn.ReLU(True),
             nn.AdaptiveAvgPool2d((4, 4)),
         )
         self.proj = nn.Sequential(
@@ -118,7 +118,7 @@ def build_backbone(dataset: str, repr_dim: int, linear: bool = False) -> nn.Modu
         if linear:
             return LinearBackbone(meta["dim"], repr_dim)
         return CNNBackbone(meta["in_ch"], repr_dim)
-    elif dataset in ("sent140", "heart_disease"):
+    elif dataset in ("sent140", "heart_disease", "school"):
         if linear:
             return LinearBackbone(meta["dim"], repr_dim)
         return MLPBackbone(meta["dim"], repr_dim)
