@@ -64,7 +64,7 @@ class _KrumFB:
         S = torch.stack(vecs); n = S.shape[0]; k = n - self.f - 2
         scores = []
         for i in range(n):
-            d = torch.norm(S - S[i], dim=1)
+            d = torch.sum((S - S[i]) ** 2, dim=1)
             scores.append(torch.topk(d, k+1, largest=False).values[1:].sum())
         return S[torch.stack(scores).argmin()]
 
