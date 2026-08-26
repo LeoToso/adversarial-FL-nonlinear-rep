@@ -1,7 +1,7 @@
 """
 run_experiment.py  —  Run one (dataset, config) experiment
 ===========================================================
-Trains either the baseline, fedrep_linear, or fedrep_nonlinear algorithm
+Trains either baseline adversarial FL or nonlinear adversarial FedRep
 for a fixed number of rounds, records per-round metrics, and returns an
 ExperimentResult object.
 """
@@ -12,7 +12,6 @@ import random
 import numpy as np
 from torch.utils.data import DataLoader
 from typing import List, Optional
-from core.fed_local import LocalOnly
 
 from core.datasets    import get_loaders, DATASET_META, heterogeneity_score
 from core.aggregators import RobustAggregator, ByzantineAttack
@@ -35,7 +34,7 @@ def run_experiment(
     n_clients:   int,
     n_byzantine: int,
     # ── algorithm ─────────────────────────────────────────
-    algorithm:   str,   # "baseline" | "fedrep_linear" | "fedrep_nonlinear"
+    algorithm:   str,   # "baseline" | "fedrep_nonlinear"
     aggregator:  str,
     attack:      str,
     loss_type:   str   = "cross_entropy",
@@ -116,8 +115,6 @@ def run_experiment(
     if verbose:
         print(f"  [4/4] Building model ({algorithm}) ...", flush=True)
 
-    linear = (algorithm == "fedrep_linear")
-
     if algorithm == "baseline":
         trainer = FedBaseline(
             dataset=dataset, n_clients=n_clients, n_byzantine=n_byzantine,
@@ -126,24 +123,16 @@ def run_experiment(
             device=str(device_obj), loss_type=loss_type,
         )
         trainer.client_test_loaders = client_test_loaders
-    elif algorithm in ("fedrep_linear", "fedrep_nonlinear"):
+    elif algorithm == "fedrep_nonlinear":
         trainer = FedRep(
             dataset=dataset, n_clients=n_clients, n_byzantine=n_byzantine,
             aggregator=agg, attack=atk, repr_dim=repr_dim,
             lr_backbone=lr, lr_head=lr_head, head_steps=head_steps,
-            momentum=momentum, linear=linear,
+            momentum=momentum, linear=False,
             device=str(device_obj), loss_type=loss_type,
         )
-        trainer.client_loaders = client_loaders
         trainer.client_loaders      = client_loaders
         trainer.client_test_loaders = client_test_loaders
-    elif algorithm == "local":
-        from core.models import build_model
-        init_model = build_model(dataset, repr_dim, meta["n_classes"], linear=False).to(device_obj)
-        trainer = LocalOnly(
-            init_model, client_loaders, client_test_loaders,
-            lr=lr, momentum=momentum, device=device_obj
-    )
     else:
         raise ValueError(f"Unknown algorithm '{algorithm}'.")
 
