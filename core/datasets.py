@@ -207,7 +207,8 @@ class RelabelDataset(Dataset):
         x, y = self.dataset[i]
         return x, y + self.offset
 
-def load_femnist_leaf(data_dir="./data/femnist", batch_size=32, seed=42):
+def load_femnist_leaf(data_dir="./data/femnist", batch_size=32, seed=42,
+                      n_clients=None):
     """Load FEMNIST using natural per-writer heterogeneity from LEAF benchmark.
     Download LEAF first: https://github.com/TalwalkarLab/leaf/tree/master/data/femnist
     Expected structure: data_dir/train/*.json, data_dir/test/*.json
@@ -215,30 +216,37 @@ def load_femnist_leaf(data_dir="./data/femnist", batch_size=32, seed=42):
     import glob, json
 
     def _read(split):
-        all_x, all_y, client_splits = [], [], []
+        by_user = {}
         fps = sorted(glob.glob(os.path.join(data_dir, split, "*.json")))
         if not fps:
             raise FileNotFoundError(f"No LEAF FEMNIST JSON files found in {data_dir}/{split}/")
         for fp in fps:
-            d = json.load(open(fp))
-            for user_data in d["user_data"].values():
-                idx_start = len(all_x)
-                x = np.array(user_data["x"], dtype=np.float32).reshape(-1, 1, 28, 28)
-                y = np.array(user_data["y"], dtype=np.int64)
-                all_x.append(x)
-                all_y.append(y)
-                client_splits.append(list(range(idx_start, idx_start + len(y))))
-        all_x = np.concatenate(all_x)
-        all_y = np.concatenate(all_y)
-        return all_x, all_y, client_splits
+            with open(fp) as stream:
+                d = json.load(stream)
+            for user, user_data in d["user_data"].items():
+                by_user[user] = (
+                    np.asarray(user_data["x"], dtype=np.float32).reshape(-1, 1, 28, 28),
+                    np.asarray(user_data["y"], dtype=np.int64),
+                )
+        return by_user
 
-    tr_x, tr_y, client_splits = _read("train")
-    te_x, te_y, _             = _read("test")
+    train_users = _read("train")
+    test_users = _read("test")
+    users = sorted(set(train_users) & set(test_users))
+    if n_clients is not None:
+        if len(users) < n_clients:
+            raise ValueError(f"Requested {n_clients} FEMNIST writers, found {len(users)}.")
+        rng = np.random.default_rng(seed)
+        users = sorted(rng.choice(users, size=n_clients, replace=False).tolist())
+    DATASET_META["femnist"]["n_classes"] = 1 + max(
+        int(train_users[user][1].max()) for user in users
+    )
 
     # normalize
     mean, std = 0.1307, 0.3081
-    tr_x = (tr_x - mean) / std
-    te_x = (te_x - mean) / std
+    def _normalise(pair):
+        x, y = pair
+        return (x - mean) / std, y
 
     class NumpyDataset(Dataset):
         def __init__(self, x, y):
@@ -247,18 +255,17 @@ def load_femnist_leaf(data_dir="./data/femnist", batch_size=32, seed=42):
         def __len__(self): return len(self.y)
         def __getitem__(self, i): return self.x[i], self.y[i]
 
-    train_ds = NumpyDataset(tr_x, tr_y)
-    test_ds  = NumpyDataset(te_x, te_y)
-
     client_train_loaders, client_test_loaders = [], []
-    for idx in client_splits:
-        train_idx, test_idx = train_test_split_indices(idx, seed=seed)
-        client_train_loaders.append(DataLoader(Subset(train_ds, train_idx),
-                                               batch_size=batch_size, shuffle=True,
-                                               num_workers=0))
-        client_test_loaders.append(DataLoader(Subset(train_ds, test_idx),
-                                              batch_size=batch_size, shuffle=False,
-                                              num_workers=0))
+    global_x, global_y = [], []
+    for user in users:
+        tr_x, tr_y = _normalise(train_users[user])
+        te_x, te_y = _normalise(test_users[user])
+        client_train_loaders.append(DataLoader(NumpyDataset(tr_x, tr_y),
+                                               batch_size=batch_size, shuffle=True))
+        client_test_loaders.append(DataLoader(NumpyDataset(te_x, te_y),
+                                              batch_size=batch_size, shuffle=False))
+        global_x.append(te_x); global_y.append(te_y)
+    test_ds = NumpyDataset(np.concatenate(global_x), np.concatenate(global_y))
     return client_train_loaders, client_test_loaders, \
            DataLoader(test_ds, batch_size=256, shuffle=False, num_workers=0)
 
@@ -266,7 +273,8 @@ def load_femnist_leaf(data_dir="./data/femnist", batch_size=32, seed=42):
 def load_femnist(n_clients, alpha, data_dir="./data", batch_size=32, seed=42, use_leaf=False):
     if use_leaf:
         leaf_dir = os.path.join(data_dir, "femnist")
-        return load_femnist_leaf(data_dir=leaf_dir, batch_size=batch_size, seed=seed)
+        return load_femnist_leaf(data_dir=leaf_dir, batch_size=batch_size,
+                                 seed=seed, n_clients=n_clients)
 
     tr = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,),(0.3081,))])
     train_ds = datasets.EMNIST(data_dir, split="letters", train=True,  download=True, transform=tr)
@@ -435,6 +443,105 @@ def _agnews_proxy(n_clients, alpha, data_dir, batch_size, seed):
            DataLoader(_VecDS(X_te, te_l), batch_size=256, shuffle=False)
 
 
+# ── School Exam Score regression ─────────────────────────────────────────────
+
+def _school_task_ranges(task_indexes, n_samples):
+    """Decode the common MALSAR task-index encodings into zero-based slices."""
+    idx = np.asarray(task_indexes).astype(int).squeeze()
+    if idx.ndim == 2 and 2 in idx.shape:
+        pairs = idx if idx.shape[1] == 2 else idx.T
+        if pairs.min() >= 1:
+            pairs = pairs - np.array([1, 0])
+        return [(int(a), int(b)) for a, b in pairs]
+    idx = idx.reshape(-1)
+    # MALSAR school.mat stores cumulative 1-based task end indices.
+    if idx[-1] == n_samples and idx[0] != 0:
+        starts = np.r_[0, idx[:-1]]
+        return list(zip(starts.astype(int), idx.astype(int)))
+    # Also accept an explicit boundary vector, zero- or one-based.
+    if idx[0] == 1:
+        idx = idx - 1
+    if idx[0] != 0:
+        idx = np.r_[0, idx]
+    if idx[-1] != n_samples:
+        idx = np.r_[idx, n_samples]
+    return [(int(idx[i]), int(idx[i + 1])) for i in range(len(idx) - 1)]
+
+
+def load_school(n_clients, alpha, data_dir="./data", batch_size=32, seed=42):
+    """Load the ILEA School Exam Score regression benchmark.
+
+    Each school is a naturally heterogeneous client. ``alpha`` is ignored.
+    The canonical MALSAR file is downloaded when absent.
+    """
+    from scipy.io import loadmat
+    from sklearn.preprocessing import StandardScaler
+    from urllib.request import urlretrieve
+
+    school_dir = os.path.join(data_dir, "school")
+    os.makedirs(school_dir, exist_ok=True)
+    mat_path = os.path.join(school_dir, "school.mat")
+    if not os.path.exists(mat_path):
+        urlretrieve(
+            "https://raw.githubusercontent.com/jiayuzhou/MALSAR/master/data/school.mat",
+            mat_path,
+        )
+    raw = loadmat(mat_path)
+    required = {"X", "Y", "task_indexes"}
+    missing = required - set(raw)
+    if missing:
+        raise KeyError(f"school.mat is missing variables: {sorted(missing)}")
+    X = np.asarray(raw["X"], dtype=np.float32)
+    y = np.asarray(raw["Y"], dtype=np.float32).reshape(-1)
+    if X.shape[0] != len(y) and X.shape[1] == len(y):
+        X = X.T
+    if X.shape[0] != len(y):
+        raise ValueError(f"Incompatible School shapes X={X.shape}, Y={y.shape}")
+    ranges = _school_task_ranges(raw["task_indexes"], len(y))
+    if len(ranges) < n_clients:
+        raise ValueError(f"Requested {n_clients} schools, found {len(ranges)}.")
+    rng = np.random.default_rng(seed)
+    chosen = sorted(rng.choice(len(ranges), size=n_clients, replace=False).tolist())
+
+    # Fit transforms on the union of the selected clients' training examples only.
+    split_by_client = []
+    all_train = []
+    for client_id in chosen:
+        start, end = ranges[client_id]
+        train_rel, test_rel = train_test_split_indices(
+            list(range(end - start)), test_ratio=0.2, seed=seed + client_id
+        )
+        train_idx = [start + j for j in train_rel]
+        test_idx = [start + j for j in test_rel]
+        split_by_client.append((train_idx, test_idx))
+        all_train.extend(train_idx)
+    x_scaler = StandardScaler().fit(X[all_train])
+    X = x_scaler.transform(X).astype(np.float32)
+    y_mean = float(y[all_train].mean())
+    y_std = float(y[all_train].std()) or 1.0
+    y = ((y - y_mean) / y_std).astype(np.float32)
+    DATASET_META["school"]["dim"] = int(X.shape[1])
+
+    class SchoolDataset(Dataset):
+        def __init__(self, features, targets):
+            self.X = torch.from_numpy(features)
+            self.y = torch.from_numpy(targets)
+        def __len__(self): return len(self.y)
+        def __getitem__(self, index): return self.X[index], self.y[index]
+
+    full = SchoolDataset(X, y)
+    client_train, client_test, global_test_idx = [], [], []
+    for train_idx, test_idx in split_by_client:
+        client_train.append(DataLoader(Subset(full, train_idx), batch_size=batch_size,
+                                       shuffle=True, num_workers=0))
+        client_test.append(DataLoader(Subset(full, test_idx), batch_size=batch_size,
+                                      shuffle=False, num_workers=0))
+        global_test_idx.extend(test_idx)
+    global_test = DataLoader(Subset(full, global_test_idx), batch_size=256,
+                             shuffle=False, num_workers=0)
+    return client_train, client_test, global_test
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 
 DATASET_META: Dict[str, Dict] = {
@@ -444,10 +551,14 @@ DATASET_META: Dict[str, Dict] = {
     "sent140":  {"n_classes": 2,   "in_ch": 1, "img": 0,  "dim": 2000},
     "heart_disease": {"n_classes": 2, "in_ch": 1, "img": 0, "dim": 11},
     "isic2019": {"n_classes": 9, "in_ch": 3, "img": 200, "dim": 3*200*200},
+    "school": {"n_classes": 1, "in_ch": 1, "img": 0, "dim": 27,
+               "task": "regression"},
 }
 
 _LOADERS = {"cifar10": load_cifar10, "cifar100": load_cifar100,
-            "femnist": load_femnist, "sent140": load_sent140, "heart_disease": load_heart_disease, "isic2019": load_isic2019}
+            "femnist": load_femnist, "sent140": load_sent140,
+            "heart_disease": load_heart_disease, "isic2019": load_isic2019,
+            "school": load_school}
 
 
 def get_loaders(dataset, n_clients, alpha, data_dir="./data", batch_size=64, seed=42, use_leaf=False):
@@ -458,8 +569,16 @@ def get_loaders(dataset, n_clients, alpha, data_dir="./data", batch_size=64, see
     return _LOADERS[dataset](n_clients, alpha, data_dir, batch_size, seed)
 
 
-def heterogeneity_score(client_loaders, n_classes) -> float:
-    """Mean pairwise L1 distance of per-client label frequency vectors."""
+def heterogeneity_score(client_loaders, n_classes, task="classification") -> float:
+    """Label-distribution L1 score, or pairwise target-mean gap for regression."""
+    if task == "regression":
+        means = []
+        for loader in client_loaders:
+            targets = [y.float().reshape(-1) for _, y in loader]
+            means.append(float(torch.cat(targets).mean()))
+        n = len(means)
+        return float(sum(abs(means[i] - means[j]) for i in range(n)
+                         for j in range(i + 1, n)) / max(n * (n - 1) / 2, 1))
     freqs = []
     for ld in client_loaders:
         cnt = np.zeros(n_classes)
