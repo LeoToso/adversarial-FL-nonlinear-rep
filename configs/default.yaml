@@ -5,7 +5,7 @@
 #   python main.py --dataset cifar10 --alpha 0.1 --rounds 300
 
 # ── Data ──────────────────────────────────────────────────────────────────────
-dataset:     cifar10          # cifar10 | cifar100 | femnist | sent140
+dataset:     cifar10          # paper grid: cifar10 | femnist | school
 data_dir:    ./data
 alpha:       0.5              # Dirichlet α  (lower = more heterogeneous)
 batch_size:  64
@@ -16,6 +16,7 @@ n_byzantine: 2                # f  (must be < n_clients / 2)
 
 # ── Algorithm ─────────────────────────────────────────────────────────────────
 algorithm:   fedrep_nonlinear # baseline | fedrep_linear | fedrep_nonlinear
+loss_type:   cross_entropy    # cross_entropy | multiclass_ls | least_squares
 repr_dim:    256              # shared representation dimension r
 head_steps:  10               # τ_h — local head optimisation steps per round
 
