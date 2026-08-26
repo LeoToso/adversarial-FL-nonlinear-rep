@@ -1,4 +1,4 @@
-# Paper experiment protocol
+# Experiments
 
 This repository implements the two empirical settings in the paper draft:
 
