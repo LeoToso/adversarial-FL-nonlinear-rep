@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Tuple
 from core.models      import FedModel, build_model, get_flat, set_flat, get_flat_grad
 from core.aggregators import RobustAggregator, ByzantineAttack
 from core.datasets    import DATASET_META
+from core.objectives  import TaskObjective, evaluate_model
 
 
 class FedBaseline:
@@ -61,6 +62,7 @@ class FedBaseline:
         momentum:    float  = 0.9,
         linear:      bool   = False,
         device:      str    = "cpu",
+        loss_type:   str    = "cross_entropy",
     ):
         assert n_byzantine < n_clients / 2, "Need f < n/2 for Byzantine resilience."
         meta = DATASET_META[dataset]
@@ -73,6 +75,7 @@ class FedBaseline:
         self.lr          = lr
         self.momentum    = momentum
         self.device      = torch.device(device)
+        self.task        = meta.get("task", "classification")
         self.client_test_loaders = None  # set externally
 
         # Global model (server copy)
@@ -87,7 +90,7 @@ class FedBaseline:
             for _ in range(self.n_honest)
         ]
 
-        self.criterion = nn.CrossEntropyLoss()
+        self.criterion = TaskObjective(self.task, loss_type, meta["n_classes"])
         self.round = 0
 
     # ── single training round ────────────────────────────────────────────────
@@ -144,38 +147,28 @@ class FedBaseline:
         set_flat(self.model.parameters(), new_flat)
         self.round += 1
 
-        mean_gnorm = float(torch.stack([v.norm() for v in honest_momenta]).mean())
         return {"loss": float(sum(ce_losses) / len(ce_losses))}
 
     # ── evaluation ───────────────────────────────────────────────────────────
 
     def evaluate(self, test_loader, client_loaders=None, head_steps=20, lr_head=0.01):
-        self.model.eval()
         if self.client_test_loaders is None:
-            # fallback to global eval
-            correct = total = 0
-            with torch.no_grad():
-                for x, y in test_loader:
-                    x, y = x.to(self.device), y.to(self.device)
-                    correct += (self.model(x).argmax(1) == y).sum().item()
-                    total += y.size(0)
-            return {"test_acc": correct/total, "test_loss": 0.0}
-        
-        client_accs, client_losses = [], []
+            return evaluate_model(self.model, test_loader, self.criterion, self.device)
+        client_results = []
         for loader in self.client_test_loaders:
-            correct = total = 0
-            total_loss = 0.0
-            with torch.no_grad():
-                for x, y in loader:
-                    x, y = x.to(self.device), y.to(self.device)
-                    logits = self.model(x)
-                    total_loss += self.criterion(logits, y).item() * y.size(0)
-                    correct += (logits.argmax(1) == y).sum().item()
-                    total += y.size(0)
-            client_accs.append(correct / total)
-            client_losses.append(total_loss / total)
-        return {"test_acc": float(sum(client_accs)/len(client_accs)),
-                "test_loss": float(sum(client_losses)/len(client_losses))}
+            client_results.append(evaluate_model(
+                self.model, loader, self.criterion, self.device
+            ))
+        out = {
+            "test_loss": float(sum(r["test_loss"] for r in client_results) /
+                               len(client_results)),
+            "metric_name": client_results[0]["metric_name"],
+            "metric_value": float(sum(r["metric_value"] for r in client_results) /
+                                  len(client_results)),
+        }
+        key = "test_acc" if self.task == "classification" else "test_mse"
+        out[key] = out["metric_value"]
+        return out
     
     def evaluate_global(
         self,
@@ -185,20 +178,7 @@ class FedBaseline:
         Global evaluation using the shared model directly on test set.
         No fine-tuning — just the global model as-is.
         """
-        self.model.eval()
-        correct = total = 0
-        total_loss = 0.0
-        with torch.no_grad():
-            for x, y in test_loader:
-                x, y = x.to(self.device), y.to(self.device)
-                logits = self.model(x)
-                total_loss += self.criterion(logits, y).item() * y.size(0)
-                correct    += (logits.argmax(1) == y).sum().item()
-                total      += y.size(0)
-        return {
-            "test_acc":  correct / total,
-            "test_loss": total_loss / total,
-        }
+        return evaluate_model(self.model, test_loader, self.criterion, self.device)
 
     def get_model(self) -> FedModel:
         return copy.deepcopy(self.model)
