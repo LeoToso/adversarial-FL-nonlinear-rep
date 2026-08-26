@@ -57,7 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Data
     p.add_argument("--dataset",    default="cifar10",
-                   choices=["cifar10", "cifar100", "femnist", "sent140", "heart_disease", "isic2019"])
+                   choices=["cifar10", "cifar100", "femnist", "sent140",
+                            "heart_disease", "isic2019", "school"])
     p.add_argument("--data_dir",   default="./data")
     p.add_argument("--alpha",      type=float, default=0.5,
                    help="Dirichlet alpha (heterogeneity)")
@@ -76,6 +77,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="'all' runs baseline + both fedrep variants")
     p.add_argument("--repr_dim",   type=int, default=256)
     p.add_argument("--head_steps", type=int, default=10)
+    p.add_argument("--loss_type", default=None,
+                   choices=["cross_entropy", "multiclass_ls", "least_squares"],
+                   help="Defaults to least_squares for School and cross_entropy otherwise")
 
     # Aggregator / attack
     p.add_argument("--aggregator", default="NNM+TrMean",
@@ -126,6 +130,8 @@ def single_run(args, algorithm: str) -> ExperimentResult:
         algorithm=algorithm,
         aggregator=args.aggregator,
         attack=args.attack,
+        loss_type=(args.loss_type or
+                   ("least_squares" if args.dataset == "school" else "cross_entropy")),
         repr_dim=repr_dim,
         head_steps=head_steps,
         lr=args.lr,
@@ -138,15 +144,16 @@ def single_run(args, algorithm: str) -> ExperimentResult:
         seed=args.seed,
         eval_every=args.eval_every,
         verbose=not args.quiet,
+        use_leaf=args.use_leaf,
     )
 
 
 def print_summary(results):
     print("\n" + "="*60)
-    print(f"{'Algorithm':<25} {'Best Acc':>10} {'Final Acc':>10}")
+    print(f"{'Algorithm':<25} {'Best metric':>12} {'Final metric':>12}")
     print("-"*60)
     for r in results:
-        print(f"  {r.algorithm:<23} {r.best_acc*100:>9.2f}%  {r.final_acc*100:>9.2f}%")
+        print(f"  {r.algorithm:<23} {r.best_metric:>10.4f}  {r.final_metric:>10.4f}")
     print("="*60 + "\n")
 
 
