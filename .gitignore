@@ -2,11 +2,17 @@
 data/
 ISIC_2019_Training_Input.zip
 
+# Generated experiment artifacts
+results/
+
 # Python
 __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Editor settings
+.vscode/
 
 # macOS
 .DS_Store
