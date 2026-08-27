@@ -232,31 +232,19 @@ class FedRep:
 
     # ── evaluation ────────────────────────────────────────────────────────────
 
-    #@torch.no_grad()
+    @torch.no_grad()
     def evaluate(self, test_loader, eval_client_idx=None):
         client_accs, client_losses = [], []
         for i, cm in enumerate(self.client_models):
+            # Evaluation must be read-only: local heads have already been
+            # trained during every communication round.  Updating them here
+            # would make the optimization trajectory depend on eval_every.
             set_flat(cm.backbone.parameters(), self._backbone_flat().clone())
-            for p in cm.backbone.parameters(): p.requires_grad_(False)
-            for p in cm.head.parameters(): p.requires_grad_(True)
-            cm.train()
-            opt = torch.optim.SGD(cm.head.parameters(), lr=self.lr_head, momentum=0.9)
-            loader_iter = iter(self.client_loaders[i])
-            for _ in range(self.head_steps):
-                try: x, y = next(loader_iter)
-                except StopIteration:
-                    loader_iter = iter(self.client_loaders[i])
-                    x, y = next(loader_iter)
-                x, y = x.to(self.device), y.to(self.device)
-                opt.zero_grad()
-                self.criterion(cm(x), y).backward()
-                opt.step()
             cm.eval()
             metrics = evaluate_model(cm, self.client_test_loaders[i],
                                      self.criterion, self.device)
             client_accs.append(metrics["metric_value"])
             client_losses.append(metrics["test_loss"])
-            for p in cm.parameters(): p.requires_grad_(True)
         value = float(sum(client_accs)/len(client_accs))
         out = {"metric_name": "accuracy" if self.task == "classification" else "mse",
                "metric_value": value,
