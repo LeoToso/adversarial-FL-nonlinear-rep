@@ -199,7 +199,7 @@ class ByzantineAttack:
         tau = kw.get("tau", 1.5)
         _map = {
             "SignFlipping":             lambda: _bfl.SignFlipping(),
-            "InnerProductManipulation": lambda: _bfl.InnerProductManipulation(f=f, tau=tau),
+            "InnerProductManipulation": lambda: _bfl.InnerProductManipulation(tau=tau),
             "FallOfEmpires":            lambda: _bfl.FallOfEmpires(f=f, tau=tau),
             "Mimic":                    lambda: _bfl.Mimic(f=f),
             "Zero":                     lambda: None,
