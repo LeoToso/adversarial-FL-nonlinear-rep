@@ -125,7 +125,16 @@ class FedBaseline:
             # Compute gradient on current global model
             self.model.zero_grad()
             loss = self.criterion(self.model(x), y)
+            if not torch.isfinite(loss):
+                raise FloatingPointError(
+                    f"Non-finite baseline loss for honest client {i} "
+                    f"at round {self.round + 1}: {loss.item()}"
+                )
             loss.backward()
+            # Match the bounded-gradient treatment used by nonlinear FedRep
+            # and prevent adversarial momentum from driving the CNN outside
+            # the numerically stable regime.
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             ce_losses.append(loss.item())
             g = get_flat_grad(self.model.parameters())
 
@@ -141,6 +150,10 @@ class FedBaseline:
         # Robust aggregation
         all_vectors = honest_momenta + byz_vectors
         agg = self.aggregator(all_vectors)
+        if not torch.isfinite(agg).all():
+            raise FloatingPointError(
+                f"Non-finite robust aggregate at round {self.round + 1}"
+            )
 
         # Server model update
         new_flat = global_flat - self.lr * agg
