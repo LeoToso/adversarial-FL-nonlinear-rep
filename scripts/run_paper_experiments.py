@@ -53,6 +53,10 @@ def parse_args():
     p.add_argument("--eval_every", type=int, default=10)
     p.add_argument("--rounds", type=int, default=None,
                    help="Override the dataset-specific number of rounds")
+    p.add_argument("--num_shards", type=int, default=1,
+                   help="Split the full grid into this many disjoint shards")
+    p.add_argument("--shard_index", type=int, default=0,
+                   help="Zero-based shard handled by this process")
     p.add_argument("--overwrite", action="store_true")
     p.add_argument("--dry_run", action="store_true")
     return p.parse_args()
@@ -66,6 +70,10 @@ def result_path(root, cfg):
 
 def main():
     args = parse_args()
+    if args.num_shards < 1:
+        raise ValueError("--num_shards must be at least 1")
+    if not 0 <= args.shard_index < args.num_shards:
+        raise ValueError("--shard_index must satisfy 0 <= index < num_shards")
     run_experiment = None
     configs = []
     for dataset in args.datasets:
@@ -81,7 +89,11 @@ def main():
                 cfg["rounds"] = args.rounds
             configs.append(cfg)
 
-    print(f"Prepared {len(configs)} configurations.")
+    total_configs = len(configs)
+    configs = [cfg for index, cfg in enumerate(configs)
+               if index % args.num_shards == args.shard_index]
+    print(f"Prepared shard {args.shard_index + 1}/{args.num_shards}: "
+          f"{len(configs)} of {total_configs} configurations.")
     for index, cfg in enumerate(configs, 1):
         path = result_path(args.output_dir, cfg)
         label = (f"{cfg['dataset']}/{cfg['loss_type']}/{cfg['algorithm']}/"
