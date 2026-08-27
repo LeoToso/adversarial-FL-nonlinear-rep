@@ -162,6 +162,11 @@ def run_experiment(
             print(f"  round {rnd:4d}/{rounds} — training ...", end="\r", flush=True)
 
         train_info = trainer.train_round(client_loaders)
+        if not np.isfinite(train_info["loss"]):
+            raise FloatingPointError(
+                f"Non-finite training loss at round {rnd}: "
+                f"{train_info['loss']}"
+            )
         result.add_train(rnd, train_info["loss"], timer.elapsed())
 
         if rnd % eval_every == 0 or rnd == rounds:
@@ -178,6 +183,18 @@ def run_experiment(
                 eval_info = trainer.evaluate(test_loader)
                 global_info = (trainer.evaluate_global(test_loader)
                                if global_probe else eval_info)
+
+            finite_values = {
+                "test_loss": eval_info.get("test_loss"),
+                "metric_value": eval_info.get("metric_value"),
+                "global_loss": global_info.get("test_loss"),
+                "global_metric_value": global_info.get("metric_value"),
+            }
+            for name, value in finite_values.items():
+                if value is not None and not np.isfinite(value):
+                    raise FloatingPointError(
+                        f"Non-finite {name} at evaluation round {rnd}: {value}"
+                    )
 
             rec = RoundRecord(
                 round      = rnd,
