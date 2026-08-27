@@ -151,18 +151,20 @@ class RobustAggregator:
         if not vectors:
             raise ValueError("Empty vector list.")
 
+        # ByzFL accepts torch tensors directly.  Keeping the stacked client
+        # matrix on its original device avoids copying tens of millions of
+        # gradient coordinates GPU -> NumPy -> GPU every round.
+        stacked = torch.stack(vectors)
+
         if self._nnm is not None:
             if _BFL:
-                arr = _np(vectors)
-                mixed = self._nnm(arr)                    # returns np array [n, d]
-                vectors = [_th(mixed[i], vectors[0]) for i in range(len(vectors))]
+                stacked = self._nnm(stacked)
             else:
                 vectors = self._nnm(vectors)              # returns list of tensors
+                stacked = torch.stack(vectors)
 
         if _BFL:
-            arr    = _np(vectors)
-            result = self._base(arr)
-            return _th(result, vectors[0])
+            return self._base(stacked)
         else:
             return self._base(vectors)
 
@@ -210,10 +212,10 @@ class ByzantineAttack:
             return []
 
         if _BFL and self._atk is not None:
-            arr = _np(honest)
-            byz = self._atk(arr)                      # single attack vector
-            t   = _th(byz, honest[0])
-            return [t.clone() for _ in range(self.f)]
+            # ByzFL preserves torch tensors and their device, so the attack is
+            # computed on GPU alongside training and robust aggregation.
+            byz = self._atk(torch.stack(honest))      # single attack vector
+            return [byz.clone() for _ in range(self.f)]
 
         # ── fallback ──
         S    = torch.stack(honest).float()
