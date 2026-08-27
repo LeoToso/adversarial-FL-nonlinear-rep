@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-AGGREGATORS = ["NNM+TrMean", "NNM+GM", "NNM+Krum"]
+AGGREGATORS = ["NNM+TrMean", "NNM+Krum"]
 ATTACKS = ["SignFlipping", "InnerProductManipulation"]
 ALGORITHMS = ["baseline", "fedrep_nonlinear"]
 LOSSES = {
