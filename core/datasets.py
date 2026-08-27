@@ -22,6 +22,12 @@ from torchvision import datasets, transforms
 from typing import Dict, List, Tuple
 
 
+# Parsing the complete LEAF FEMNIST JSON corpus takes several minutes.  The
+# paper runner evaluates many configurations in one Python process, so retain
+# the immutable writer arrays after the first load and reuse them thereafter.
+_FEMNIST_LEAF_CACHE = {}
+
+
 # ── Dirichlet partitioner ────────────────────────────────────────────────────
 
 def dirichlet_partition(
@@ -230,8 +236,10 @@ def load_femnist_leaf(data_dir="./data/femnist", batch_size=32, seed=42,
                 )
         return by_user
 
-    train_users = _read("train")
-    test_users = _read("test")
+    cache_key = os.path.abspath(data_dir)
+    if cache_key not in _FEMNIST_LEAF_CACHE:
+        _FEMNIST_LEAF_CACHE[cache_key] = (_read("train"), _read("test"))
+    train_users, test_users = _FEMNIST_LEAF_CACHE[cache_key]
     users = sorted(set(train_users) & set(test_users))
     if n_clients is not None:
         if len(users) < n_clients:
