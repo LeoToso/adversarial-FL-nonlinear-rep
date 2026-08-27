@@ -495,17 +495,49 @@ def load_school(n_clients, alpha, data_dir="./data", batch_size=32, seed=42):
             mat_path,
         )
     raw = loadmat(mat_path)
-    required = {"X", "Y", "task_indexes"}
+    required = {"X", "Y"}
     missing = required - set(raw)
     if missing:
         raise KeyError(f"school.mat is missing variables: {sorted(missing)}")
-    X = np.asarray(raw["X"], dtype=np.float32)
-    y = np.asarray(raw["Y"], dtype=np.float32).reshape(-1)
-    if X.shape[0] != len(y) and X.shape[1] == len(y):
-        X = X.T
-    if X.shape[0] != len(y):
-        raise ValueError(f"Incompatible School shapes X={X.shape}, Y={y.shape}")
-    ranges = _school_task_ranges(raw["task_indexes"], len(y))
+
+    # MALSAR has circulated two compatible School encodings: either X/Y are
+    # dense concatenated arrays accompanied by task_indexes, or they are 1x139
+    # MATLAB cell arrays with one X_i/Y_i pair per school.
+    if raw["X"].dtype == object or raw["Y"].dtype == object:
+        x_cells = raw["X"].reshape(-1)
+        y_cells = raw["Y"].reshape(-1)
+        if len(x_cells) != len(y_cells):
+            raise ValueError("School X and Y cell arrays have different lengths")
+        x_parts, y_parts, ranges = [], [], []
+        offset = 0
+        for client_id, (x_cell, y_cell) in enumerate(zip(x_cells, y_cells)):
+            x_i = np.asarray(x_cell, dtype=np.float32)
+            y_i = np.asarray(y_cell, dtype=np.float32).reshape(-1)
+            if x_i.ndim != 2:
+                raise ValueError(f"School {client_id} X has shape {x_i.shape}")
+            if x_i.shape[0] != len(y_i) and x_i.shape[1] == len(y_i):
+                x_i = x_i.T
+            if x_i.shape[0] != len(y_i):
+                raise ValueError(
+                    f"School {client_id} has incompatible X={x_i.shape}, "
+                    f"Y={y_i.shape}"
+                )
+            x_parts.append(x_i)
+            y_parts.append(y_i)
+            ranges.append((offset, offset + len(y_i)))
+            offset += len(y_i)
+        X = np.concatenate(x_parts, axis=0)
+        y = np.concatenate(y_parts, axis=0)
+    else:
+        if "task_indexes" not in raw:
+            raise KeyError("Dense school.mat is missing variable 'task_indexes'")
+        X = np.asarray(raw["X"], dtype=np.float32)
+        y = np.asarray(raw["Y"], dtype=np.float32).reshape(-1)
+        if X.shape[0] != len(y) and X.shape[1] == len(y):
+            X = X.T
+        if X.shape[0] != len(y):
+            raise ValueError(f"Incompatible School shapes X={X.shape}, Y={y.shape}")
+        ranges = _school_task_ranges(raw["task_indexes"], len(y))
     if len(ranges) < n_clients:
         raise ValueError(f"Requested {n_clients} schools, found {len(ranges)}.")
     rng = np.random.default_rng(seed)
