@@ -242,8 +242,6 @@ def run_experiment(
                 "final_metric": result.final_metric,
                 "metric_name": result.history[-1].metric_name,
             },
-            "momentum_buffers": [buffer.detach().cpu()
-                                 for buffer in trainer.mom_buffers],
         }
         if algorithm == "baseline":
             checkpoint["model_state_dict"] = cpu_state(trainer.model)
