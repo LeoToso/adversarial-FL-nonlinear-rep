@@ -42,7 +42,8 @@ def main():
                 [x["train_loss"] for x in r["train_history"][:common]] for r in runs
             ])
             mean = losses.mean(axis=0)
-            std = losses.std(axis=0)
+            std = (losses.std(axis=0, ddof=1) if len(runs) > 1
+                   else np.zeros_like(mean))
             label = "Adversarial FL" if algorithm == "baseline" else "Nonlinear FedRep"
             ax.plot(rounds, mean, linewidth=2, label=label)
             ax.fill_between(rounds, mean - std, mean + std, alpha=0.2)
@@ -56,6 +57,44 @@ def main():
         fig.savefig(output / f"{stem}.png", dpi=180)
         fig.savefig(output / f"{stem}.pdf")
         plt.close(fig)
+
+        # Held-out task metric (accuracy for classification, MSE for School)
+        # and held-out objective, both recorded at the evaluation cadence.
+        for field, suffix, default_ylabel in (
+            ("metric_value", "metric", "Held-out metric"),
+            ("test_loss", "test_loss", "Held-out loss"),
+        ):
+            fig, ax = plt.subplots(figsize=(7, 4.5))
+            ylabel = default_ylabel
+            for algorithm in ("baseline", "fedrep_nonlinear"):
+                runs = [r for r in records if r["algorithm"] == algorithm]
+                if not runs:
+                    continue
+                common = min(len(r["history"]) for r in runs)
+                rounds = np.asarray([
+                    x["round"] for x in runs[0]["history"][:common]
+                ])
+                values = np.asarray([
+                    [x[field] for x in r["history"][:common]] for r in runs
+                ])
+                mean = values.mean(axis=0)
+                std = (values.std(axis=0, ddof=1) if len(runs) > 1
+                       else np.zeros_like(mean))
+                label = ("Adversarial FL" if algorithm == "baseline"
+                         else "Nonlinear FedRep")
+                ax.plot(rounds, mean, linewidth=2, label=label)
+                ax.fill_between(rounds, mean - std, mean + std, alpha=0.2)
+                if field == "metric_value":
+                    ylabel = runs[0]["history"][0]["metric_name"].upper()
+            ax.set_xlabel("Communication round")
+            ax.set_ylabel(ylabel)
+            ax.set_title(f"{dataset} | {loss_type} | {aggregator} | {attack}")
+            ax.legend()
+            ax.grid(alpha=0.25)
+            fig.tight_layout()
+            fig.savefig(output / f"{stem}_{suffix}.png", dpi=180)
+            fig.savefig(output / f"{stem}_{suffix}.pdf")
+            plt.close(fig)
 
 
 if __name__ == "__main__":
