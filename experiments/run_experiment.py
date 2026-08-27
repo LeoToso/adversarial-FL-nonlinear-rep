@@ -6,6 +6,7 @@ for a fixed number of rounds, records per-round metrics, and returns an
 ExperimentResult object.
 """
 
+import os
 import time
 import torch
 import random
@@ -55,6 +56,7 @@ def run_experiment(
     verbose:     bool  = True,
     use_leaf:    bool  = False,
     global_probe: bool = False,
+    checkpoint_path: str = None,
 ) -> ExperimentResult:
     """
     Full training loop for one experiment configuration.
@@ -208,5 +210,53 @@ def run_experiment(
     if verbose:
         print(f"\n  ✓ Done — best {result.history[-1].metric_name}="
               f"{result.best_metric:.4f}, final={result.final_metric:.4f}\n")
+
+    if checkpoint_path is not None:
+        def cpu_state(module):
+            return {name: value.detach().cpu()
+                    for name, value in module.state_dict().items()}
+
+        checkpoint = {
+            "format_version": 1,
+            "round": rounds,
+            "config": {
+                "dataset": dataset,
+                "alpha": alpha,
+                "n_clients": n_clients,
+                "n_byzantine": n_byzantine,
+                "algorithm": algorithm,
+                "aggregator": aggregator,
+                "attack": attack,
+                "loss_type": loss_type,
+                "repr_dim": repr_dim,
+                "head_steps": head_steps,
+                "lr": lr,
+                "lr_head": lr_head,
+                "momentum": momentum,
+                "rounds": rounds,
+                "batch_size": batch_size,
+                "seed": seed,
+            },
+            "result_summary": {
+                "best_metric": result.best_metric,
+                "final_metric": result.final_metric,
+                "metric_name": result.history[-1].metric_name,
+            },
+            "momentum_buffers": [buffer.detach().cpu()
+                                 for buffer in trainer.mom_buffers],
+        }
+        if algorithm == "baseline":
+            checkpoint["model_state_dict"] = cpu_state(trainer.model)
+        else:
+            checkpoint["backbone_state_dict"] = cpu_state(trainer.backbone)
+            checkpoint["client_head_state_dicts"] = [
+                cpu_state(model.head) for model in trainer.client_models
+            ]
+
+        checkpoint_path = os.path.abspath(checkpoint_path)
+        os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+        temporary_checkpoint = checkpoint_path + ".tmp"
+        torch.save(checkpoint, temporary_checkpoint)
+        os.replace(temporary_checkpoint, checkpoint_path)
 
     return result
