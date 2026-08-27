@@ -96,9 +96,10 @@ def main():
           f"{len(configs)} of {total_configs} configurations.")
     for index, cfg in enumerate(configs, 1):
         path = result_path(args.output_dir, cfg)
+        checkpoint_path = path.with_suffix(".pt")
         label = (f"{cfg['dataset']}/{cfg['loss_type']}/{cfg['algorithm']}/"
                  f"{cfg['aggregator']}/{cfg['attack']}/seed={cfg['seed']}")
-        if path.exists() and not args.overwrite:
+        if path.exists() and checkpoint_path.exists() and not args.overwrite:
             print(f"[{index}/{len(configs)}] skip {label}")
             continue
         print(f"[{index}/{len(configs)}] run  {label}")
@@ -107,7 +108,7 @@ def main():
         if run_experiment is None:
             from experiments.run_experiment import run_experiment as _run_experiment
             run_experiment = _run_experiment
-        result = run_experiment(**cfg)
+        result = run_experiment(**cfg, checkpoint_path=str(checkpoint_path))
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")
         with temporary.open("w") as stream:
