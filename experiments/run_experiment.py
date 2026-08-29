@@ -44,6 +44,8 @@ def run_experiment(
     head_steps:  int   = 10,
     lr:          float = 0.1,
     lr_head:     float = 0.01,
+    lr_schedule: str   = "constant",
+    lr_min:      float = 0.0,
     momentum:    float = 0.9,
     rounds:      int   = 200,
     batch_size:  int   = 64,
@@ -66,6 +68,20 @@ def run_experiment(
     set_seed(seed)
     attack_kwargs = attack_kwargs or {}
     task = DATASET_META[dataset].get("task", "classification")
+    if lr_schedule not in {"constant", "cosine"}:
+        raise ValueError(
+            f"Unknown lr_schedule '{lr_schedule}'; expected constant or cosine."
+        )
+    if not 0.0 <= lr_min <= lr:
+        raise ValueError("lr_min must satisfy 0 <= lr_min <= lr")
+
+    def server_learning_rate(round_number: int) -> float:
+        """Learning rate used by the shared server parameter at this round."""
+        if lr_schedule == "constant" or rounds <= 1:
+            return float(lr)
+        progress = (round_number - 1) / (rounds - 1)
+        cosine = 0.5 * (1.0 + np.cos(np.pi * progress))
+        return float(lr_min + (lr - lr_min) * cosine)
 
     if verbose:
         print(f"\n{'='*70}")
@@ -161,13 +177,22 @@ def run_experiment(
         if verbose and rnd % max(1, eval_every // 2) == 0:
             print(f"  round {rnd:4d}/{rounds} — training ...", end="\r", flush=True)
 
+        current_lr = server_learning_rate(rnd)
+        if algorithm == "baseline":
+            trainer.lr = current_lr
+        else:
+            trainer.lr_backbone = current_lr
+
         train_info = trainer.train_round(client_loaders)
         if not np.isfinite(train_info["loss"]):
             raise FloatingPointError(
                 f"Non-finite training loss at round {rnd}: "
                 f"{train_info['loss']}"
             )
-        result.add_train(rnd, train_info["loss"], timer.elapsed())
+        result.add_train(
+            rnd, train_info["loss"], timer.elapsed(),
+            learning_rate=current_lr,
+        )
 
         if rnd % eval_every == 0 or rnd == rounds:
             if algorithm == "baseline":
@@ -207,6 +232,7 @@ def run_experiment(
                 metric_value = eval_info["metric_value"],
                 global_loss = global_info.get("test_loss"),
                 global_metric_value = global_info.get("metric_value"),
+                learning_rate = current_lr,
             )
             result.add(rec)
 
@@ -249,6 +275,8 @@ def run_experiment(
                 "head_steps": head_steps,
                 "lr": lr,
                 "lr_head": lr_head,
+                "lr_schedule": lr_schedule,
+                "lr_min": lr_min,
                 "momentum": momentum,
                 "rounds": rounds,
                 "batch_size": batch_size,
