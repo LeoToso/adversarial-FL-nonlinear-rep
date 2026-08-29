@@ -53,6 +53,11 @@ def parse_args():
     p.add_argument("--eval_every", type=int, default=10)
     p.add_argument("--rounds", type=int, default=None,
                    help="Override the dataset-specific number of rounds")
+    p.add_argument("--lr_schedule", choices=["constant", "cosine"],
+                   default="constant",
+                   help="Server/shared-representation learning-rate schedule")
+    p.add_argument("--lr_min", type=float, default=0.0,
+                   help="Final server learning rate for cosine decay")
     p.add_argument("--num_shards", type=int, default=1,
                    help="Split the full grid into this many disjoint shards")
     p.add_argument("--shard_index", type=int, default=0,
@@ -84,7 +89,8 @@ def main():
             cfg.update(dataset=dataset, loss_type=loss, algorithm=algorithm,
                        aggregator=aggregator, attack=attack, seed=seed,
                        data_dir=args.data_dir, device=args.device,
-                       eval_every=args.eval_every)
+                       eval_every=args.eval_every,
+                       lr_schedule=args.lr_schedule, lr_min=args.lr_min)
             if args.rounds is not None:
                 cfg["rounds"] = args.rounds
             configs.append(cfg)
