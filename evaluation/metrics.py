@@ -22,6 +22,7 @@ class RoundRecord:
     metric_value: float = 0.0
     global_loss: Optional[float] = None
     global_metric_value: Optional[float] = None
+    learning_rate: Optional[float] = None
 
 
 @dataclass
@@ -65,11 +66,19 @@ class ExperimentResult:
             trap = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
             self.auc_acc = float(trap(accs) / max(len(accs) - 1, 1))
 
-    def add_train(self, round_number: int, objective: float, wall_time: float):
+    def add_train(
+        self,
+        round_number: int,
+        objective: float,
+        wall_time: float,
+        learning_rate: Optional[float] = None,
+    ):
         self.train_history.append({
             "round": int(round_number),
             "train_loss": float(objective),
             "wall_time": float(wall_time),
+            "learning_rate": (None if learning_rate is None
+                              else float(learning_rate)),
         })
 
     def to_dict(self) -> Dict:
