@@ -150,3 +150,23 @@ Each case saves incremental JSON diagnostics and a final model (not a resumable
 checkpoint). The script refuses an existing output seed directory. GPU gradient
 instrumentation adds synchronization overhead; do not use its timing as a speed
 benchmark. Production trainers and previous results are not modified.
+
+The follow-up head-phase ablation isolates dropout and optimizer choice:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python scripts/diagnose_femnist_head_ablation.py \
+  --device cuda --seed 42 --rounds 100 \
+  --output_dir results/femnist_head_ablation_v4
+```
+
+Three clean multiclass-LS cases use 50 head steps: SGD with dropout, SGD without
+head-phase dropout, and Adam without head-phase dropout. All use head LR 0.01,
+batch size 32, clipping norm 1, and fresh optimizer state each round. Backbone
+dropout, LR 0.1, and momentum 0.9 are unchanged. This is an equal-LR optimizer
+comparison, not tuned Adam. Minibatch order is matched across cases independently
+of dropout's random-number consumption. Per-writer head losses and prediction
+histograms are measured without dropout before/after fitting, before the server
+backbone update; they are training metrics, not held-out performance. JSON is
+saved each round, and a non-resumable final model is saved for each case.
+This separate diagnostic does not change production FedRep. Its explicit RNG
+control means it need not reproduce earlier diagnostic trajectories exactly.
