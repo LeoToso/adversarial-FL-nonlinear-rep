@@ -131,3 +131,22 @@ checkpoint selection or resumable training checkpoints.
 Keep all pre-fix results in their original directories. Use new directories for
 corrected runs: the gradient update and CIFAR evaluation protocol have changed,
 so their old and new results must not be pooled into a single five-seed summary.
+
+For the next training-only optimization diagnostic:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python scripts/diagnose_femnist_optimization.py \
+  --device cuda --seed 42 --rounds 100 --probe_steps 200 \
+  --output_dir results/femnist_optimization_v3
+```
+
+This compares 10 versus 50 head steps for both losses, leaving other trainer
+settings unchanged. It records raw backbone gradient norms, server update norms,
+and per-writer training prediction histograms. At the end, copies of each head
+are fitted with SGD and Adam on cached, dropout-free training features. These
+full-writer probes differ from minibatch federated training and do not guarantee
+linear separability or generalization. Test metrics are not used for selection.
+Each case saves incremental JSON diagnostics and a final model (not a resumable
+checkpoint). The script refuses an existing output seed directory. GPU gradient
+instrumentation adds synchronization overhead; do not use its timing as a speed
+benchmark. Production trainers and previous results are not modified.
