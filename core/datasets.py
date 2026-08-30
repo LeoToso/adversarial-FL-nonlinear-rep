@@ -15,6 +15,7 @@ Each load_* function returns:
 """
 
 import os, json, glob
+import copy
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, Subset
@@ -163,6 +164,9 @@ def load_cifar10(n_clients, alpha, data_dir="./data", batch_size=64, seed=42):
     te = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, std)])
     train_ds = datasets.CIFAR10(data_dir, train=True,  download=True, transform=tr)
     test_ds  = datasets.CIFAR10(data_dir, train=False, download=True, transform=te)
+    # Same raw images/indices, but no random augmentation on held-out examples.
+    heldout_ds = copy.copy(train_ds)
+    heldout_ds.transform = te
     splits   = dirichlet_partition(np.array(train_ds.targets), n_clients, alpha, seed)
     client_train_loaders, client_test_loaders = [], []
     for idx in splits:
@@ -170,7 +174,7 @@ def load_cifar10(n_clients, alpha, data_dir="./data", batch_size=64, seed=42):
         client_train_loaders.append(DataLoader(Subset(train_ds, train_idx),
                                                batch_size=batch_size, shuffle=True,
                                                num_workers=0, pin_memory=False))
-        client_test_loaders.append(DataLoader(Subset(train_ds, test_idx),
+        client_test_loaders.append(DataLoader(Subset(heldout_ds, test_idx),
                                               batch_size=batch_size, shuffle=False,
                                               num_workers=0, pin_memory=False))
     return client_train_loaders, client_test_loaders, \
@@ -187,6 +191,8 @@ def load_cifar100(n_clients, alpha, data_dir="./data", batch_size=64, seed=42):
     te = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, std)])
     train_ds = datasets.CIFAR100(data_dir, train=True,  download=True, transform=tr)
     test_ds  = datasets.CIFAR100(data_dir, train=False, download=True, transform=te)
+    heldout_ds = copy.copy(train_ds)
+    heldout_ds.transform = te
     splits   = dirichlet_partition(np.array(train_ds.targets), n_clients, alpha, seed)
     client_train_loaders, client_test_loaders = [], []
     for idx in splits:
@@ -194,7 +200,7 @@ def load_cifar100(n_clients, alpha, data_dir="./data", batch_size=64, seed=42):
         client_train_loaders.append(DataLoader(Subset(train_ds, train_idx),
                                                batch_size=batch_size, shuffle=True,
                                                num_workers=0, pin_memory=False))
-        client_test_loaders.append(DataLoader(Subset(train_ds, test_idx),
+        client_test_loaders.append(DataLoader(Subset(heldout_ds, test_idx),
                                               batch_size=batch_size, shuffle=False,
                                               num_workers=0, pin_memory=False))
     return client_train_loaders, client_test_loaders, \
@@ -230,10 +236,27 @@ def load_femnist_leaf(data_dir="./data/femnist", batch_size=32, seed=42,
             with open(fp) as stream:
                 d = json.load(stream)
             for user, user_data in d["user_data"].items():
-                by_user[user] = (
-                    np.asarray(user_data["x"], dtype=np.float32).reshape(-1, 1, 28, 28),
-                    np.asarray(user_data["y"], dtype=np.int64),
-                )
+                context = f"LEAF FEMNIST {split}/{user} in {fp}"
+                x = np.asarray(user_data["x"], dtype=np.float32)
+                labels = np.asarray(user_data["y"])
+                if (labels.ndim != 1 or len(labels) == 0 or
+                        x.shape != (len(labels), 784)):
+                    raise ValueError(
+                        f"{context}: expected nonempty x shape (samples, 784) "
+                        f"and y shape (samples,), got x={x.shape}, y={labels.shape}"
+                    )
+                if (not np.issubdtype(labels.dtype, np.number) or
+                        not np.isfinite(labels).all() or
+                        not np.equal(labels, np.floor(labels)).all() or
+                        (labels < 0).any() or (labels >= 62).any()):
+                    raise ValueError(f"{context}: labels must be integers in [0, 61]")
+                # Canonical LEAF preprocessing already scales pixels to [0, 1].
+                # Reject inconsistent encodings rather than silently rescaling.
+                if (not np.isfinite(x).all() or
+                        x.min() < -1e-6 or x.max() > 1.0 + 1e-6):
+                    raise ValueError(f"{context}: expected finite pixel values in [0, 1]")
+                by_user[user] = (x.reshape(-1, 1, 28, 28),
+                                 labels.astype(np.int64))
         return by_user
 
     cache_key = os.path.abspath(data_dir)
@@ -246,9 +269,8 @@ def load_femnist_leaf(data_dir="./data/femnist", batch_size=32, seed=42,
             raise ValueError(f"Requested {n_clients} FEMNIST writers, found {len(users)}.")
         rng = np.random.default_rng(seed)
         users = sorted(rng.choice(users, size=n_clients, replace=False).tolist())
-    DATASET_META["femnist"]["n_classes"] = 1 + max(
-        int(train_users[user][1].max()) for user in users
-    )
+    # Keep the canonical label space even when selected writers omit classes.
+    DATASET_META["femnist"]["n_classes"] = 62
 
     # normalize
     mean, std = 0.1307, 0.3081
@@ -284,6 +306,8 @@ def load_femnist(n_clients, alpha, data_dir="./data", batch_size=32, seed=42, us
         return load_femnist_leaf(data_dir=leaf_dir, batch_size=batch_size,
                                  seed=seed, n_clients=n_clients)
 
+    # This legacy proxy is a separate 26-class task; never inherit LEAF metadata.
+    DATASET_META["femnist"]["n_classes"] = 26
     tr = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,),(0.3081,))])
     train_ds = datasets.EMNIST(data_dir, split="letters", train=True,  download=True, transform=tr)
     test_ds  = datasets.EMNIST(data_dir, split="letters", train=False, download=True, transform=tr)
@@ -587,7 +611,7 @@ def load_school(n_clients, alpha, data_dir="./data", batch_size=32, seed=42):
 DATASET_META: Dict[str, Dict] = {
     "cifar10":  {"n_classes": 10,  "in_ch": 3, "img": 32, "dim": 3*32*32},
     "cifar100": {"n_classes": 100, "in_ch": 3, "img": 32, "dim": 3*32*32},
-    "femnist":  {"n_classes": 26,  "in_ch": 1, "img": 28, "dim": 1*28*28},
+    "femnist":  {"n_classes": 62,  "in_ch": 1, "img": 28, "dim": 1*28*28},
     "sent140":  {"n_classes": 2,   "in_ch": 1, "img": 0,  "dim": 2000},
     "heart_disease": {"n_classes": 2, "in_ch": 1, "img": 0, "dim": 11},
     "isic2019": {"n_classes": 9, "in_ch": 3, "img": 200, "dim": 3*200*200},

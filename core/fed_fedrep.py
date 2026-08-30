@@ -163,6 +163,9 @@ class FedRep:
         for i, loader in enumerate(client_loaders[: self.n_honest]):
             model = self.client_models[i]
             model.train()
+            # Freezing parameters does not remove their previous .grad tensors.
+            # Start each alternating phase with no gradients from the other one.
+            model.zero_grad(set_to_none=True)
 
             # ── Step 2: local head update (τ_h steps, backbone frozen) ───────
             for p in model.backbone.parameters():
@@ -182,10 +185,10 @@ class FedRep:
                     x, y = next(loader_iter)
 
                 x, y = x.to(self.device), y.to(self.device)
-                head_opt.zero_grad()
+                head_opt.zero_grad(set_to_none=True)
                 loss = self.criterion(model(x), y)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(model.head.parameters(), max_norm=1.0)
                 ce_losses.append(loss.item()) 
                 head_opt.step()
 
@@ -202,11 +205,12 @@ class FedRep:
                 x, y = next(iter(loader))
             x, y = x.to(self.device), y.to(self.device)
 
-            model.zero_grad()
+            model.zero_grad(set_to_none=True)
             loss = self.criterion(model(x), y)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.backbone.parameters(), max_norm=1.0)
             g_bb = get_flat_grad(model.backbone.parameters())
+            model.zero_grad(set_to_none=True)
 
             # restore all params to trainable
             for p in model.parameters():
