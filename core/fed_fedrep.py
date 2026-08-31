@@ -87,8 +87,12 @@ class FedRep:
         linear:       bool  = False,
         device:       str   = "cpu",
         loss_type:    str   = "cross_entropy",
+        head_optimizer: str = "sgd",
     ):
         assert n_byzantine < n_clients / 2
+        if head_optimizer not in {"sgd", "adam_reset"}:
+            raise ValueError("head_optimizer must be sgd or adam_reset")
+        self.head_optimizer = head_optimizer
         meta = DATASET_META[dataset]
 
         self.n_clients   = n_clients
@@ -173,7 +177,9 @@ class FedRep:
             for p in model.head.parameters():
                 p.requires_grad_(True)
 
-            head_opt = torch.optim.SGD(model.head.parameters(), lr=self.lr_head)
+            optimizer_class = (torch.optim.Adam if self.head_optimizer == "adam_reset"
+                               else torch.optim.SGD)
+            head_opt = optimizer_class(model.head.parameters(), lr=self.lr_head)
 
             # Materialise a batch iterator that wraps around
             loader_iter = iter(loader)

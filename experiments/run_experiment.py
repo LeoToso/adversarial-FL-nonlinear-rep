@@ -59,6 +59,7 @@ def run_experiment(
     use_leaf:    bool  = False,
     global_probe: bool = False,
     checkpoint_path: str = None,
+    head_optimizer: str = "sgd",
 ) -> ExperimentResult:
     """
     Full training loop for one experiment configuration.
@@ -146,6 +147,7 @@ def run_experiment(
             dataset=dataset, n_clients=n_clients, n_byzantine=n_byzantine,
             aggregator=agg, attack=atk, repr_dim=repr_dim,
             lr_backbone=lr, lr_head=lr_head, head_steps=head_steps,
+            head_optimizer=head_optimizer,
             momentum=momentum, linear=False,
             device=str(device_obj), loss_type=loss_type,
         )
@@ -275,6 +277,7 @@ def run_experiment(
                 "head_steps": head_steps,
                 "lr": lr,
                 "lr_head": lr_head,
+                "head_optimizer": head_optimizer if algorithm != "baseline" else None,
                 "lr_schedule": lr_schedule,
                 "lr_min": lr_min,
                 "momentum": momentum,

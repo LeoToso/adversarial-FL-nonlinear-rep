@@ -190,3 +190,40 @@ automatic best-checkpoint selection or early stopping. Each case saves JSON
 and a final model; persistent Adam states are included, but missing RNG and
 backbone momentum prevent exact training resumption. Existing output seed
 directories are refused, and production FedRep is unchanged.
+
+## Provisional overnight FEMNIST grid
+
+```bash
+bash scripts/run_femnist_overnight.sh
+```
+
+Activate the experiment environment and run inside tmux. The launcher defaults
+to GPU 1 and first runs 16 two-round smoke cases (one seed, every combination).
+Only after all succeed does it launch 80 full cases: two losses, two algorithms,
+two aggregators, two attacks, five seeds. Every full case runs 200 rounds,
+evaluated every 10. Ten natural honest writers plus five Byzantine workers are
+used per seed. FedRep uses reset Adam for its private heads (LR 0.001, 50 steps);
+the baseline's SGD update is unchanged. Both use the same architecture and
+server LR 0.1, constant schedule, momentum 0.9, and batch size 32. Dropout stays
+enabled during training. Existing entry points still default to SGD heads.
+
+This is provisional: support for Adam came from clean, single-seed least-squares
+diagnostics, not cross-entropy or attacked runs. The grid changes head optimizer,
+head LR and head steps versus old runs; do not pool results with older grids or
+describe this as a controlled optimizer-only comparison. The head optimizer is
+an empirical implementation choice, not a newly established paper guarantee.
+
+Outputs go to results/femnist_adam_reset_v6; each case has JSON curves, explicit
+run configuration, source revision and a final model (not resumable optimizer
+state). A manifest prevents mixing revisions or configurations when restarting.
+Restarting skips completed configurations, not partially completed rounds.
+Full-run failures are recorded in failures.json and remaining cases continue;
+any failure yields a nonzero exit status and prevents automatic summary tables.
+Successful completion generates mean/std tables. Smoke tests fail immediately
+on error. Logs append on restart; previous experiment directories are untouched.
+Runtime depends on GPU contention and head fitting; overnight completion is not
+guaranteed. Preview the grid with:
+
+```bash
+python scripts/run_femnist_overnight.py --output_dir results/femnist_adam_reset_v6 --dry_run
+```
