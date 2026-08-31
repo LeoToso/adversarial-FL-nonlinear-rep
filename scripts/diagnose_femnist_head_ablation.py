@@ -24,11 +24,12 @@ def next_batch(iterator, loader):
     return batch, iterator
 
 
-def diagnostic_round(trainer, loaders, optimizer_name, dropout, seed):
+def diagnostic_round(trainer, loaders, optimizer_name, dropout, seed, optimizers=None):
     """Same minibatches and backbone RNG across cases at each round/client.
 
-    Optimizers reset each round, as in production SGD. Adam uses the same LR
-    as SGD to isolate optimizer choice, not a separately tuned LR.
+    Optimizers reset each round unless a per-client optimizer list is supplied.
+    The original CLI uses equal learning rates; other diagnostics may set
+    trainer.lr_head explicitly and supply persistent optimizer objects.
     """
     records, momenta = [], []
     devices = [trainer.device.index if trainer.device.index is not None
@@ -52,8 +53,9 @@ def diagnostic_round(trainer, loaders, optimizer_name, dropout, seed):
             model.zero_grad(set_to_none=True)
             model.backbone.requires_grad_(False)
             model.head.requires_grad_(True)
-            optimizer = getattr(torch.optim, optimizer_name)(
-                model.head.parameters(), lr=trainer.lr_head)
+            optimizer = (optimizers[i] if optimizers is not None else
+                         getattr(torch.optim, optimizer_name)(
+                             model.head.parameters(), lr=trainer.lr_head))
             iterator = iter(loader)
             for _ in range(trainer.head_steps):
                 (x, y), iterator = next_batch(iterator, loader)

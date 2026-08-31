@@ -170,3 +170,23 @@ backbone update; they are training metrics, not held-out performance. JSON is
 saved each round, and a non-resumable final model is saved for each case.
 This separate diagnostic does not change production FedRep. Its explicit RNG
 control means it need not reproduce earlier diagnostic trajectories exactly.
+
+To compare SGD (head LR 0.01), reset Adam (0.001), and persistent per-client
+Adam (0.001), all with dropout enabled and 50 head steps:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python scripts/diagnose_femnist_optimizer_state.py \
+  --device cuda --seed 42 --rounds 100 \
+  --output_dir results/femnist_optimizer_state_v5
+```
+
+This clean, single-seed multiclass-LS diagnostic matches minibatch order and
+initialization. It saves head-fitting diagnostics every round and read-only
+training/held-out metrics every 10 rounds (also the last round), measured after
+the server update and averaged equally across writers. The held-out data are
+the LEAF test split, not a new validation split: these are exploratory results,
+not an unbiased final evaluation after hyperparameter selection. There is no
+automatic best-checkpoint selection or early stopping. Each case saves JSON
+and a final model; persistent Adam states are included, but missing RNG and
+backbone momentum prevent exact training resumption. Existing output seed
+directories are refused, and production FedRep is unchanged.
