@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Create the 10-letter, 150-client FEMNIST partition of Collins et al.
+
+The source is an already-preprocessed LEAF FEMNIST corpus.  Train and test
+files are pooled because Collins et al. repartition the underlying examples,
+then a new 90/10 client-specific split is produced.  Sampling is without
+replacement; the published generator accidentally reused examples, so this
+script records the clean correction explicitly in metadata.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+from pathlib import Path
+
+import numpy as np
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--leaf_dir", default="data/femnist")
+    parser.add_argument("--output_dir", default="data/femnist_collins")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--n_clients", type=int, default=150)
+    parser.add_argument("--classes_per_client", type=int, default=3)
+    parser.add_argument("--max_per_class", type=int, default=4000)
+    parser.add_argument("--target_mean_train", type=float, default=148.0)
+    parser.add_argument("--min_train", type=int, default=50)
+    return parser.parse_args()
+
+
+def read_pool(leaf_dir: Path, max_per_class: int, rng: np.random.Generator):
+    # Reservoir sampling avoids retaining every Python float from the complete
+    # 817k-example LEAF corpus in memory.
+    by_class = {label: [] for label in range(36, 46)}
+    seen = {label: 0 for label in by_class}
+    files = sorted(glob.glob(str(leaf_dir / "train" / "*.json")))
+    files += sorted(glob.glob(str(leaf_dir / "test" / "*.json")))
+    if not files:
+        raise FileNotFoundError(f"No LEAF JSON files under {leaf_dir}")
+    for path in files:
+        with open(path) as stream:
+            data = json.load(stream)
+        for user_data in data["user_data"].values():
+            for x, y in zip(user_data["x"], user_data["y"]):
+                label = int(y)
+                if label in by_class:
+                    seen[label] += 1
+                    item = np.asarray(x, dtype=np.float32)
+                    if len(by_class[label]) < max_per_class:
+                        by_class[label].append(item)
+                    else:
+                        replacement = int(rng.integers(seen[label]))
+                        if replacement < max_per_class:
+                            by_class[label][replacement] = item
+    return {label: np.asarray(images, dtype=np.float32)
+            for label, images in by_class.items()}
+
+
+def concatenate(parts):
+    offsets = [0]
+    xs, ys = [], []
+    for x, y in parts:
+        xs.append(x); ys.append(y)
+        offsets.append(offsets[-1] + len(y))
+    return (np.concatenate(xs), np.concatenate(ys),
+            np.asarray(offsets, dtype=np.int64))
+
+
+def main():
+    args = parse_args()
+    rng = np.random.default_rng(args.seed)
+    pool = read_pool(Path(args.leaf_dir), args.max_per_class, rng)
+    for label in pool:
+        rng.shuffle(pool[label])
+
+    # Retain the log-normal allocation described in the paper while matching
+    # its reported mean (148 training samples/client) and minimum (50).
+    raw_counts = rng.lognormal(4.0, 1.0, args.n_clients)
+    desired_train = (args.min_train +
+                     (args.target_mean_train - args.min_train) *
+                     raw_counts / raw_counts.mean())
+    requested = np.ceil(desired_train / 0.9).astype(int)
+    cursors = {label: 0 for label in pool}
+    train_parts, test_parts, class_sets = [], [], []
+    for client in range(args.n_clients):
+        labels = [(client + j) % 10 for j in range(args.classes_per_client)]
+        per_class = max(2, requested[client] // args.classes_per_client)
+        client_x, client_y = [], []
+        for relabelled in labels:
+            original = relabelled + 36
+            start, stop = cursors[original], cursors[original] + per_class
+            if stop > len(pool[original]):
+                raise RuntimeError(
+                    f"Class {original} has {len(pool[original])} examples but "
+                    f"the requested disjoint partition needs at least {stop}. "
+                    "Increase --max_per_class only if the LEAF pool contains more."
+                )
+            client_x.append(pool[original][start:stop])
+            client_y.append(np.full(per_class, relabelled, dtype=np.int64))
+            cursors[original] = stop
+        x, y = np.concatenate(client_x), np.concatenate(client_y)
+        order = rng.permutation(len(y)); x, y = x[order], y[order]
+        train_len = int(0.9 * len(y))
+        train_parts.append((x[:train_len], y[:train_len]))
+        test_parts.append((x[train_len:], y[train_len:]))
+        class_sets.append(labels)
+
+    train_x, train_y, train_offsets = concatenate(train_parts)
+    test_x, test_y, test_offsets = concatenate(test_parts)
+    output = Path(args.output_dir); output.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        output / "partition.npz", train_x=train_x, train_y=train_y,
+        train_offsets=train_offsets, test_x=test_x, test_y=test_y,
+        test_offsets=test_offsets,
+    )
+    metadata = {
+        "benchmark": "collins21_femnist_letters",
+        "n_clients": args.n_clients,
+        "n_classes": 10,
+        "original_labels": list(range(36, 46)),
+        "classes_per_client": args.classes_per_client,
+        "class_sets": class_sets,
+        "seed": args.seed,
+        "train_samples": int(len(train_y)),
+        "test_samples": int(len(test_y)),
+        "mean_train_samples_per_client": float(np.mean(np.diff(train_offsets))),
+        "min_train_samples_per_client": int(np.min(np.diff(train_offsets))),
+        "target_mean_train_samples_per_client": args.target_mean_train,
+        "target_min_train_samples_per_client": args.min_train,
+        "split": "90/10 per synthetic client",
+        "sample_reuse": False,
+        "note": "Clean no-overlap implementation of Collins et al. 10-letter protocol",
+    }
+    with (output / "metadata.json").open("w") as stream:
+        json.dump(metadata, stream, indent=2)
+    print(json.dumps(metadata, indent=2))
+
+
+if __name__ == "__main__":
+    main()
