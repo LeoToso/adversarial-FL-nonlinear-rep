@@ -28,6 +28,12 @@ def parse_args():
     parser.add_argument("--max_per_class", type=int, default=4000)
     parser.add_argument("--target_mean_train", type=float, default=148.0)
     parser.add_argument("--min_train", type=int, default=50)
+    parser.add_argument(
+        "--published_compatibility",
+        action="store_true",
+        help=("Match the paper's reported sample statistics by cycling a "
+              "class pool when it is exhausted. Reuse is recorded in metadata."),
+    )
     return parser.parse_args()
 
 
@@ -129,14 +135,23 @@ def main():
                      (args.target_mean_train - args.min_train) *
                      raw_counts / raw_counts.mean())
     requested = np.ceil(desired_train / 0.9).astype(int)
-    per_class_counts, assignments = fit_disjoint_class_capacity(
-        requested=requested,
-        n_clients=args.n_clients,
-        classes_per_client=args.classes_per_client,
-        pool_sizes={label - 36: len(images) for label, images in pool.items()},
-        min_train=args.min_train,
-    )
+    assignments = [tuple((client + j) % 10
+                         for j in range(args.classes_per_client))
+                   for client in range(args.n_clients)]
+    if args.published_compatibility:
+        per_class_counts = np.maximum(
+            2, requested // args.classes_per_client).astype(int)
+    else:
+        per_class_counts, assignments = fit_disjoint_class_capacity(
+            requested=requested,
+            n_clients=args.n_clients,
+            classes_per_client=args.classes_per_client,
+            pool_sizes={label - 36: len(images)
+                        for label, images in pool.items()},
+            min_train=args.min_train,
+        )
     cursors = {label: 0 for label in pool}
+    assignments_per_original_class = {label: 0 for label in pool}
     train_parts, test_parts, class_sets = [], [], []
     for client in range(args.n_clients):
         labels = list(assignments[client])
@@ -145,15 +160,25 @@ def main():
         for relabelled in labels:
             original = relabelled + 36
             start, stop = cursors[original], cursors[original] + per_class
-            if stop > len(pool[original]):
+            assignments_per_original_class[original] += per_class
+            if stop > len(pool[original]) and not args.published_compatibility:
                 raise RuntimeError(
                     f"Class {original} has {len(pool[original])} examples but "
                     f"the requested disjoint partition needs at least {stop}. "
                     "Increase --max_per_class only if the LEAF pool contains more."
                 )
-            client_x.append(pool[original][start:stop])
+            if stop <= len(pool[original]):
+                selected = pool[original][start:stop]
+            else:
+                # Compatibility mode uses a deterministic circular pool.  This
+                # matches the published sample counts with the finite lowercase
+                # class corpus while making reuse explicit and auditable.
+                indices = np.arange(start, stop) % len(pool[original])
+                selected = pool[original][indices]
+            client_x.append(selected)
             client_y.append(np.full(per_class, relabelled, dtype=np.int64))
-            cursors[original] = stop
+            cursors[original] = (stop % len(pool[original])
+                                 if args.published_compatibility else stop)
         x, y = np.concatenate(client_x), np.concatenate(client_y)
         order = rng.permutation(len(y)); x, y = x[order], y[order]
         train_len = int(0.9 * len(y))
@@ -169,6 +194,11 @@ def main():
         train_offsets=train_offsets, test_x=test_x, test_y=test_y,
         test_offsets=test_offsets,
     )
+    reused_by_class = {
+        str(label): max(0, assignments_per_original_class[label] - len(pool[label]))
+        for label in pool
+    }
+    reused_total = int(sum(reused_by_class.values()))
     metadata = {
         "benchmark": "collins21_femnist_letters",
         "n_clients": args.n_clients,
@@ -184,8 +214,16 @@ def main():
         "target_mean_train_samples_per_client": args.target_mean_train,
         "target_min_train_samples_per_client": args.min_train,
         "split": "90/10 per synthetic client",
-        "sample_reuse": False,
-        "note": "Clean no-overlap implementation of Collins et al. 10-letter protocol",
+        "published_compatibility": args.published_compatibility,
+        "sample_reuse": bool(reused_total),
+        "reused_assignments": reused_total,
+        "reused_assignments_by_original_class": reused_by_class,
+        "reuse_fraction": float(reused_total / (len(train_y) + len(test_y))),
+        "note": (
+            "Published-compatible sample statistics with explicitly recorded "
+            "class-pool cycling" if args.published_compatibility else
+            "Clean no-overlap implementation of Collins et al. 10-letter protocol"
+        ),
     }
     with (output / "metadata.json").open("w") as stream:
         json.dump(metadata, stream, indent=2)

@@ -18,11 +18,15 @@ Use the complete LEAF corpus already located in `data/femnist`:
 python scripts/prepare_collins_femnist.py \
   --leaf_dir data/femnist \
   --output_dir data/femnist_collins \
-  --seed 42
+  --seed 42 \
+  --published_compatibility
 ```
 
-The generated metadata records class identities, sample counts, the random
-seed, and the fact that examples are not reused across clients.
+The compatibility partition matches the paper's sample statistics. Because
+the available lowercase class pools are finite, exhausted pools are cycled;
+the generated metadata records the exact number and fraction of reused
+assignments. Omit `--published_compatibility` for a strictly disjoint ablation,
+which may have fewer than 148 mean training samples per client.
 
 ## Smoke test
 

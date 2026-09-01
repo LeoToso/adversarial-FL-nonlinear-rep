@@ -28,6 +28,13 @@ def test_capacity_fitting_preserves_minimum_and_class_balance():
     assert min(per_class) * 3 * 0.9 >= 50
 
 
+def test_compatibility_circular_indices_have_requested_length():
+    pool_length = 7
+    start, stop = 5, 12
+    indices = np.arange(start, stop) % pool_length
+    assert indices.tolist() == [5, 6, 0, 1, 2, 3, 4]
+
+
 def tiny_partition(n=4):
     train, test = [], []
     for client in range(n):
