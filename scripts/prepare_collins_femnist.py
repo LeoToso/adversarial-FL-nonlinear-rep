@@ -69,6 +69,52 @@ def concatenate(parts):
             np.asarray(offsets, dtype=np.int64))
 
 
+def fit_disjoint_class_capacity(requested, n_clients, classes_per_client,
+                                pool_sizes, min_train):
+    """Reduce only allocations that exceed an observed class capacity.
+
+    Each synthetic client receives an equal number of examples from each of
+    its classes.  Decrementing one client's per-class allocation therefore
+    reduces demand for all of that client's three labels without changing its
+    class balance.  The paper's minimum of 50 training samples is preserved.
+    """
+    per_class = np.maximum(2, requested // classes_per_client).astype(int)
+    min_total = int(np.ceil(min_train / 0.9))
+    min_per_class = int(np.ceil(min_total / classes_per_client))
+
+    assignments = [tuple((client + j) % 10
+                         for j in range(classes_per_client))
+                   for client in range(n_clients)]
+
+    def demand(label):
+        return sum(per_class[client] for client, labels in enumerate(assignments)
+                   if label in labels)
+
+    while True:
+        excess = {
+            label: demand(label) - pool_sizes[label]
+            for label in range(10)
+            if demand(label) > pool_sizes[label]
+        }
+        if not excess:
+            break
+        # Fix the most constrained class first.  Prefer reducing the largest
+        # eligible client so the log-normal shape changes as little as possible.
+        label = max(excess, key=excess.get)
+        eligible = [client for client, labels in enumerate(assignments)
+                    if label in labels and per_class[client] > min_per_class]
+        if not eligible:
+            raise RuntimeError(
+                f"Class {label + 36} cannot satisfy the requested disjoint "
+                f"partition while retaining at least {min_train} training "
+                "samples per client."
+            )
+        client = max(eligible, key=lambda index: per_class[index])
+        per_class[client] -= 1
+
+    return per_class, assignments
+
+
 def main():
     args = parse_args()
     rng = np.random.default_rng(args.seed)
@@ -83,11 +129,18 @@ def main():
                      (args.target_mean_train - args.min_train) *
                      raw_counts / raw_counts.mean())
     requested = np.ceil(desired_train / 0.9).astype(int)
+    per_class_counts, assignments = fit_disjoint_class_capacity(
+        requested=requested,
+        n_clients=args.n_clients,
+        classes_per_client=args.classes_per_client,
+        pool_sizes={label - 36: len(images) for label, images in pool.items()},
+        min_train=args.min_train,
+    )
     cursors = {label: 0 for label in pool}
     train_parts, test_parts, class_sets = [], [], []
     for client in range(args.n_clients):
-        labels = [(client + j) % 10 for j in range(args.classes_per_client)]
-        per_class = max(2, requested[client] // args.classes_per_client)
+        labels = list(assignments[client])
+        per_class = int(per_class_counts[client])
         client_x, client_y = [], []
         for relabelled in labels:
             original = relabelled + 36

@@ -6,6 +6,28 @@ torch = pytest.importorskip("torch")
 from core.collins_femnist import ArrayDataset, CollinsConfig, CollinsFEMNISTTrainer, CollinsMLP
 
 
+def test_capacity_fitting_preserves_minimum_and_class_balance():
+    import importlib.util
+    from pathlib import Path
+
+    script = Path(__file__).parents[1] / "scripts" / "prepare_collins_femnist.py"
+    spec = importlib.util.spec_from_file_location("prepare_collins_femnist", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    requested = np.full(10, 60)
+    per_class, assignments = module.fit_disjoint_class_capacity(
+        requested, n_clients=10, classes_per_client=3,
+        pool_sizes={label: 59 for label in range(10)}, min_train=50,
+    )
+    for label in range(10):
+        used = sum(per_class[client]
+                   for client, labels in enumerate(assignments)
+                   if label in labels)
+        assert used <= 59
+    assert min(per_class) * 3 * 0.9 >= 50
+
+
 def tiny_partition(n=4):
     train, test = [], []
     for client in range(n):
