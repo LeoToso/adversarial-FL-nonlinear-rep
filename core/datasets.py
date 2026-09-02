@@ -181,6 +181,30 @@ def load_cifar10(n_clients, alpha, data_dir="./data", batch_size=64, seed=42):
            DataLoader(test_ds, batch_size=256, shuffle=False, num_workers=0)
 
 
+def load_cifar10_collins(n_clients, alpha=None, data_dir="./data", batch_size=10, seed=42):
+    """Collins et al.: 100 clients, two distinct classes and 500 train samples each."""
+    if n_clients != 100:
+        raise ValueError("The Collins CIFAR-10 population has exactly 100 honest clients")
+    tfm = transforms.Compose([transforms.ToTensor(), transforms.Normalize((.5,.5,.5),(.5,.5,.5))])
+    train_ds = datasets.CIFAR10(data_dir, train=True, download=True, transform=tfm)
+    test_ds = datasets.CIFAR10(data_dir, train=False, download=True, transform=tfm)
+    rng = np.random.default_rng(seed)
+    train_by_class = [np.flatnonzero(np.asarray(train_ds.targets) == k) for k in range(10)]
+    test_by_class = [np.flatnonzero(np.asarray(test_ds.targets) == k) for k in range(10)]
+    for indices in train_by_class + test_by_class:
+        rng.shuffle(indices)
+    train_pos, test_pos, train_loaders, test_loaders = [0]*10, [0]*10, [], []
+    for client in range(100):
+        train_idx, test_idx = [], []
+        for label in (client % 10, (client + 1) % 10):
+            train_idx.extend(train_by_class[label][train_pos[label]:train_pos[label]+250])
+            test_idx.extend(test_by_class[label][test_pos[label]:test_pos[label]+50])
+            train_pos[label] += 250; test_pos[label] += 50
+        train_loaders.append(DataLoader(Subset(train_ds, train_idx), batch_size=batch_size, shuffle=True))
+        test_loaders.append(DataLoader(Subset(test_ds, test_idx), batch_size=batch_size, shuffle=False))
+    return train_loaders, test_loaders, DataLoader(test_ds, batch_size=256, shuffle=False)
+
+
 # ── CIFAR-100 ────────────────────────────────────────────────────────────────
 
 def load_cifar100(n_clients, alpha, data_dir="./data", batch_size=64, seed=42):
@@ -610,6 +634,7 @@ def load_school(n_clients, alpha, data_dir="./data", batch_size=32, seed=42):
 
 DATASET_META: Dict[str, Dict] = {
     "cifar10":  {"n_classes": 10,  "in_ch": 3, "img": 32, "dim": 3*32*32},
+    "cifar10_collins": {"n_classes": 10, "in_ch": 3, "img": 32, "dim": 3*32*32},
     "cifar100": {"n_classes": 100, "in_ch": 3, "img": 32, "dim": 3*32*32},
     "femnist":  {"n_classes": 62,  "in_ch": 1, "img": 28, "dim": 1*28*28},
     "sent140":  {"n_classes": 2,   "in_ch": 1, "img": 0,  "dim": 2000},
@@ -619,7 +644,7 @@ DATASET_META: Dict[str, Dict] = {
                "task": "regression"},
 }
 
-_LOADERS = {"cifar10": load_cifar10, "cifar100": load_cifar100,
+_LOADERS = {"cifar10": load_cifar10, "cifar10_collins": load_cifar10_collins, "cifar100": load_cifar100,
             "femnist": load_femnist, "sent140": load_sent140,
             "heart_disease": load_heart_disease, "isic2019": load_isic2019,
             "school": load_school}
