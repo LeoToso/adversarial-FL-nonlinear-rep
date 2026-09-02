@@ -30,12 +30,16 @@ def parse_args():
                         default=["NNM+TrMean", "NNM+Krum"])
     parser.add_argument(
         "--attacks", nargs="+",
-        choices=["SignFlipping", "InnerProductManipulation", "ALIE"],
-        default=["SignFlipping", "InnerProductManipulation"],
+        choices=["ALIE", "Mimic", "SignFlipping", "InnerProductManipulation"],
+        default=["ALIE", "Mimic"],
     )
     parser.add_argument(
         "--attack_tau", type=float, default=1.5,
         help="Attack factor for IPM and ALIE (default: 1.5)",
+    )
+    parser.add_argument(
+        "--mimic_client", type=int, default=0,
+        help="Zero-based honest client position copied by Mimic (default: 0)",
     )
     parser.add_argument("--seeds", nargs="+", type=int,
                         default=[42, 123, 456, 789, 1024])
@@ -75,6 +79,7 @@ def main():
             honest_per_round=args.honest_per_round,
             byzantine_per_round=byzantine, aggregator=aggregator, attack=attack,
             attack_tau=args.attack_tau,
+            mimic_client=args.mimic_client,
             eval_every=args.eval_every, seed=seed, device=args.device,
             official_softmax_ce=not args.standard_logits,
         )
