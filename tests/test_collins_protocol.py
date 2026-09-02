@@ -4,6 +4,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from core.collins_femnist import ArrayDataset, CollinsConfig, CollinsFEMNISTTrainer, CollinsMLP
+from core.aggregators import ByzantineAttack
 
 
 def test_capacity_fitting_preserves_minimum_and_class_balance():
@@ -33,6 +34,23 @@ def test_compatibility_circular_indices_have_requested_length():
     start, stop = 5, 12
     indices = np.arange(start, stop) % pool_length
     assert indices.tolist() == [5, 6, 0, 1, 2, 3, 4]
+
+
+def test_alie_matches_coordinatewise_mean_plus_population_std():
+    honest = [
+        torch.tensor([1.0, 2.0, 4.0]),
+        torch.tensor([3.0, 4.0, 8.0]),
+        torch.tensor([5.0, 8.0, 12.0]),
+    ]
+    tau = 1.5
+    malicious = ByzantineAttack("ALIE", f=2, tau=tau)(honest)
+    stacked = torch.stack(honest)
+    expected = (
+        stacked.mean(dim=0)
+        + tau * stacked.std(dim=0, unbiased=False)
+    )
+    assert len(malicious) == 2
+    assert all(torch.allclose(vector, expected) for vector in malicious)
 
 
 def tiny_partition(n=4):
