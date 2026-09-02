@@ -13,8 +13,8 @@ implementations when ByzFL is not installed.
   NNM+<base>      NNM pre-aggregation → reduces κ to O(f/n) for any base
 
 Byzantine attacks:
-  SignFlipping, InnerProductManipulation (ALIE), FallOfEmpires (FOE),
-  Mimic, Zero, Random
+  SignFlipping, InnerProductManipulation (IPM), A Little Is Enough (ALIE),
+  FallOfEmpires (FOE), Mimic, Zero, Random
 """
 
 import torch
@@ -172,7 +172,7 @@ class RobustAggregator:
 # ── Byzantine attacks ─────────────────────────────────────────────────────────
 
 _SUPPORTED_ATK = [
-    "SignFlipping", "InnerProductManipulation",
+    "SignFlipping", "InnerProductManipulation", "ALIE",
     "FallOfEmpires", "Mimic", "Zero", "Random",
 ]
 
@@ -200,6 +200,7 @@ class ByzantineAttack:
         _map = {
             "SignFlipping":             lambda: _bfl.SignFlipping(),
             "InnerProductManipulation": lambda: _bfl.InnerProductManipulation(tau=tau),
+            "ALIE":                     lambda: _bfl.ALittleIsEnough(tau=tau),
             "FallOfEmpires":            lambda: _bfl.FallOfEmpires(f=f, tau=tau),
             "Mimic":                    lambda: _bfl.Mimic(f=f),
             "Zero":                     lambda: None,
@@ -224,6 +225,10 @@ class ByzantineAttack:
 
         if self.name == "SignFlipping":
             byz = -mean
+        elif self.name == "ALIE":
+            # ByzFL and the ALIE definition use the population standard
+            # deviation (denominator n), not PyTorch's unbiased estimator.
+            byz = mean + tau * S.std(dim=0, unbiased=False)
         elif self.name in ("InnerProductManipulation", "FallOfEmpires"):
             byz = -tau * mean / (mean.norm() + 1e-8) * S.norm(dim=1).max()
         elif self.name == "Mimic":
