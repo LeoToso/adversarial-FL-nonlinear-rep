@@ -151,7 +151,8 @@ class FedRep:
 
     # ── one round ────────────────────────────────────────────────────────────
 
-    def train_round(self, client_loaders: List[DataLoader]) -> Dict[str, float]:
+    def train_round(self, client_loaders: List[DataLoader],
+                    client_indices: Optional[List[int]] = None) -> Dict[str, float]:
         """
         Parameters
         ----------
@@ -164,7 +165,10 @@ class FedRep:
         honest_momenta: List[torch.Tensor] = []
         ce_losses: List[float] = []
 
-        for i, loader in enumerate(client_loaders[: self.n_honest]):
+        selected = (list(range(self.n_honest)) if client_indices is None
+                    else list(client_indices))
+        for i in selected:
+            loader = client_loaders[i]
             model = self.client_models[i]
             model.train()
             # Freezing parameters does not remove their previous .grad tensors.
