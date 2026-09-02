@@ -74,3 +74,23 @@ CUDA_VISIBLE_DEVICES=1 python scripts/run_collins_femnist.py \
 The released FedRep implementation applied softmax before
 `CrossEntropyLoss`; this behavior is enabled by default for reproduction.
 Use `--standard_logits` only as a separately labelled ablation.
+
+## ALIE attack
+
+ALIE (A Little Is Enough) is distinct from Inner Product Manipulation. For
+honest client vectors with coordinate-wise mean `mu` and population standard
+deviation `sigma`, it submits `mu + tau * sigma`. The default is
+`tau=1.5`, matching ByzFL. Run only ALIE with:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python scripts/run_collins_femnist.py \
+  --mode robust \
+  --algorithms fedavg fedrep \
+  --aggregators 'NNM+TrMean' 'NNM+Krum' \
+  --attacks ALIE \
+  --attack_tau 1.5 \
+  --seeds 42 123 456 789 1024 \
+  --byzantine_per_round 5 \
+  --device cuda \
+  --output_dir results/femnist_collins_alie_5seeds
+```
