@@ -18,7 +18,9 @@ def args():
 
 def identity(path, obj):
     text = str(path)
-    h = obj.get("honest_per_round") or obj.get("config", {}).get("active_honest_clients")
+    h = (obj.get("honest_per_round") or
+         obj.get("config", {}).get("honest_per_round") or
+         obj.get("config", {}).get("active_honest_clients"))
     if h is None:
         m = re.search(r"honest_(10|20|50)", text); h = int(m.group(1)) if m else None
     method = obj.get("algorithm") or obj.get("config", {}).get("algorithm")
@@ -32,6 +34,7 @@ def series(obj, school):
     out = {}
     for rec in obj.get("history", []):
         value = rec.get("mean_local_accuracy")
+        if value is None: value = rec.get("accuracy")
         if value is None: value = rec.get("metric_value")
         if value is None and school: value = rec.get("test_mse")
         if value is not None: out[int(rec["round"])] = float(value)
