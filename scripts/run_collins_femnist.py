@@ -28,8 +28,15 @@ def parse_args():
                         default=["fedavg", "fedrep"])
     parser.add_argument("--aggregators", nargs="+",
                         default=["NNM+TrMean", "NNM+Krum"])
-    parser.add_argument("--attacks", nargs="+",
-                        default=["SignFlipping", "InnerProductManipulation"])
+    parser.add_argument(
+        "--attacks", nargs="+",
+        choices=["SignFlipping", "InnerProductManipulation", "ALIE"],
+        default=["SignFlipping", "InnerProductManipulation"],
+    )
+    parser.add_argument(
+        "--attack_tau", type=float, default=1.5,
+        help="Attack factor for IPM and ALIE (default: 1.5)",
+    )
     parser.add_argument("--seeds", nargs="+", type=int,
                         default=[42, 123, 456, 789, 1024])
     parser.add_argument("--rounds", type=int, default=200)
@@ -67,6 +74,7 @@ def main():
             algorithm=algorithm, rounds=args.rounds,
             honest_per_round=args.honest_per_round,
             byzantine_per_round=byzantine, aggregator=aggregator, attack=attack,
+            attack_tau=args.attack_tau,
             eval_every=args.eval_every, seed=seed, device=args.device,
             official_softmax_ce=not args.standard_logits,
         )
