@@ -53,6 +53,17 @@ def test_alie_matches_coordinatewise_mean_plus_population_std():
     assert all(torch.allclose(vector, expected) for vector in malicious)
 
 
+def test_mimic_copies_selected_honest_client():
+    honest = [
+        torch.tensor([1.0, 2.0]),
+        torch.tensor([3.0, 4.0]),
+        torch.tensor([5.0, 6.0]),
+    ]
+    malicious = ByzantineAttack("Mimic", f=2, epsilon=1)(honest)
+    assert len(malicious) == 2
+    assert all(torch.equal(vector, honest[1]) for vector in malicious)
+
+
 def tiny_partition(n=4):
     train, test = [], []
     for client in range(n):
