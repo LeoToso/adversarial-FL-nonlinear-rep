@@ -98,6 +98,10 @@ def run_experiment(
         print(f"  [1/4] Downloading / loading {dataset} data ...", flush=True)
 
     n_hon = n_clients - n_byzantine
+    active_honest_clients = n_hon if active_honest_clients is None else active_honest_clients
+    if not 1 <= active_honest_clients <= n_hon:
+        raise ValueError("active_honest_clients must be between 1 and the honest population")
+    participation_rng = np.random.default_rng(seed + 104729)
     client_loaders, client_test_loaders, test_loader = get_loaders(
         dataset, n_hon, alpha,
         data_dir=data_dir, batch_size=batch_size, seed=seed,
@@ -185,7 +189,8 @@ def run_experiment(
         else:
             trainer.lr_backbone = current_lr
 
-        train_info = trainer.train_round(client_loaders)
+        selected = participation_rng.choice(n_hon, size=active_honest_clients, replace=False).tolist()
+        train_info = trainer.train_round(client_loaders, client_indices=selected)
         if not np.isfinite(train_info["loss"]):
             raise FloatingPointError(
                 f"Non-finite training loss at round {rnd}: "
@@ -284,6 +289,7 @@ def run_experiment(
                 "rounds": rounds,
                 "batch_size": batch_size,
                 "seed": seed,
+                "active_honest_clients": active_honest_clients,
             },
             "result_summary": {
                 "best_metric": result.best_metric,
