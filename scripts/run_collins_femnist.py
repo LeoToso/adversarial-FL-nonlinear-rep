@@ -45,7 +45,7 @@ def parse_args():
                         default=[42, 123, 456, 789, 1024])
     parser.add_argument("--rounds", type=int, default=200)
     parser.add_argument("--eval_every", type=int, default=10)
-    parser.add_argument("--honest_per_round", type=int, default=15)
+    parser.add_argument("--honest_per_round", nargs="+", type=int, default=[10, 20, 50])
     parser.add_argument("--byzantine_per_round", type=int, default=5)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--standard_logits", action="store_true",
@@ -56,7 +56,8 @@ def parse_args():
 
 def output_path(root: str, config: CollinsConfig) -> Path:
     attack = config.attack if config.byzantine_per_round else "None"
-    return (Path(root) / config.algorithm / config.aggregator / attack /
+    return (Path(root) / f"honest_{config.honest_per_round}" /
+            config.algorithm / config.aggregator / attack /
             f"seed_{config.seed}.json")
 
 
@@ -67,16 +68,16 @@ def main():
         raise ValueError("This runner requires the 150-client, 10-class Collins partition")
 
     if args.mode == "clean":
-        grid = itertools.product(args.algorithms, ["Average"], ["SignFlipping"], args.seeds)
+        grid = itertools.product(args.honest_per_round, args.algorithms, ["Average"], ["SignFlipping"], args.seeds)
         byzantine = 0
     else:
-        grid = itertools.product(args.algorithms, args.aggregators, args.attacks, args.seeds)
+        grid = itertools.product(args.honest_per_round, args.algorithms, args.aggregators, args.attacks, args.seeds)
         byzantine = args.byzantine_per_round
 
-    for algorithm, aggregator, attack, seed in grid:
+    for honest_per_round, algorithm, aggregator, attack, seed in grid:
         config = CollinsConfig(
             algorithm=algorithm, rounds=args.rounds,
-            honest_per_round=args.honest_per_round,
+            honest_per_round=honest_per_round,
             byzantine_per_round=byzantine, aggregator=aggregator, attack=attack,
             attack_tau=args.attack_tau,
             mimic_client=args.mimic_client,
