@@ -166,6 +166,7 @@ class CollinsConfig:
     aggregator: str = "Average"
     attack: str = "SignFlipping"
     attack_tau: float = 1.5
+    mimic_client: int = 0
     batch_size: int = 10
     lr: float = 0.01
     momentum: float = 0.5
@@ -213,6 +214,7 @@ class CollinsFEMNISTTrainer:
             self.attack = ByzantineAttack(
                 config.attack, config.byzantine_per_round,
                 tau=config.attack_tau,
+                epsilon=config.mimic_client,
             )
 
     def _aggregate(self, deltas: List[torch.Tensor], weights: List[int]) -> torch.Tensor:
