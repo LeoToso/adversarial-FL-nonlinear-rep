@@ -63,7 +63,7 @@ CUDA_VISIBLE_DEVICES=1 python scripts/run_collins_femnist.py \
   --mode robust \
   --algorithms fedavg fedrep \
   --aggregators 'NNM+TrMean' 'NNM+Krum' \
-  --attacks SignFlipping InnerProductManipulation \
+  --attacks ALIE Mimic \
   --seeds 42 123 456 789 1024 \
   --byzantine_per_round 5 \
   --device cuda \
@@ -75,22 +75,25 @@ The released FedRep implementation applied softmax before
 `CrossEntropyLoss`; this behavior is enabled by default for reproduction.
 Use `--standard_logits` only as a separately labelled ablation.
 
-## ALIE attack
+## ALIE and Mimic attacks
 
 ALIE (A Little Is Enough) is distinct from Inner Product Manipulation. For
 honest client vectors with coordinate-wise mean `mu` and population standard
 deviation `sigma`, it submits `mu + tau * sigma`. The default is
-`tau=1.5`, matching ByzFL. Run only ALIE with:
+`tau=1.5`, matching ByzFL. Mimic copies the update at a selected zero-based
+position among the honest clients sampled in that round; the default is
+position 0. Run the complete ALIE and Mimic comparison with:
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 python scripts/run_collins_femnist.py \
   --mode robust \
   --algorithms fedavg fedrep \
   --aggregators 'NNM+TrMean' 'NNM+Krum' \
-  --attacks ALIE \
+  --attacks ALIE Mimic \
   --attack_tau 1.5 \
+  --mimic_client 0 \
   --seeds 42 123 456 789 1024 \
   --byzantine_per_round 5 \
   --device cuda \
-  --output_dir results/femnist_collins_alie_5seeds
+  --output_dir results/femnist_collins_alie_mimic_5seeds
 ```
