@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 AGGREGATORS = ["NNM+TrMean", "NNM+Krum"]
-ATTACKS = ["SignFlipping", "InnerProductManipulation"]
-SUPPORTED_ATTACKS = ATTACKS + ["ALIE"]
+ATTACKS = ["ALIE", "Mimic"]
+SUPPORTED_ATTACKS = ATTACKS + ["SignFlipping", "InnerProductManipulation"]
 ALGORITHMS = ["baseline", "fedrep_nonlinear"]
 LOSSES = {
     "cifar10": ["cross_entropy", "multiclass_ls"],
@@ -52,6 +52,8 @@ def parse_args():
                    default=ATTACKS)
     p.add_argument("--attack_tau", type=float, default=1.5,
                    help="Attack factor for IPM and ALIE")
+    p.add_argument("--mimic_client", type=int, default=0,
+                   help="Zero-based honest client position copied by Mimic")
     p.add_argument("--data_dir", default="./data")
     p.add_argument("--output_dir", default="results/paper")
     p.add_argument("--device", default="cpu")
@@ -96,7 +98,8 @@ def main():
                        data_dir=args.data_dir, device=args.device,
                        eval_every=args.eval_every,
                        lr_schedule=args.lr_schedule, lr_min=args.lr_min,
-                       attack_kwargs={"tau": args.attack_tau})
+                       attack_kwargs={"tau": args.attack_tau,
+                                      "epsilon": args.mimic_client})
             if args.rounds is not None:
                 cfg["rounds"] = args.rounds
             configs.append(cfg)
