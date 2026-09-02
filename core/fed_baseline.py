@@ -98,6 +98,7 @@ class FedBaseline:
     def train_round(
         self,
         client_loaders: List[DataLoader],
+        client_indices: Optional[List[int]] = None,
     ) -> Dict[str, float]:
         """
         Run one communication round.
@@ -117,7 +118,10 @@ class FedBaseline:
         honest_momenta: List[torch.Tensor] = []
         ce_losses: List[float] = []
 
-        for i, loader in enumerate(client_loaders[: self.n_honest]):
+        selected = (list(range(self.n_honest)) if client_indices is None
+                    else list(client_indices))
+        for i in selected:
+            loader = client_loaders[i]
             # Load one mini-batch
             x, y = next(iter(loader))
             x, y = x.to(self.device), y.to(self.device)
