@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 AGGREGATORS = ["NNM+TrMean", "NNM+Krum"]
 ATTACKS = ["SignFlipping", "InnerProductManipulation"]
+SUPPORTED_ATTACKS = ATTACKS + ["ALIE"]
 ALGORITHMS = ["baseline", "fedrep_nonlinear"]
 LOSSES = {
     "cifar10": ["cross_entropy", "multiclass_ls"],
@@ -47,6 +48,10 @@ def parse_args():
                    choices=list(LOSSES))
     p.add_argument("--seeds", nargs="+", type=int,
                    default=[42, 123, 456, 789, 1024])
+    p.add_argument("--attacks", nargs="+", choices=SUPPORTED_ATTACKS,
+                   default=ATTACKS)
+    p.add_argument("--attack_tau", type=float, default=1.5,
+                   help="Attack factor for IPM and ALIE")
     p.add_argument("--data_dir", default="./data")
     p.add_argument("--output_dir", default="results/paper")
     p.add_argument("--device", default="cpu")
@@ -83,14 +88,15 @@ def main():
     configs = []
     for dataset in args.datasets:
         for loss, algorithm, aggregator, attack, seed in itertools.product(
-            LOSSES[dataset], ALGORITHMS, AGGREGATORS, ATTACKS, args.seeds
+            LOSSES[dataset], ALGORITHMS, AGGREGATORS, args.attacks, args.seeds
         ):
             cfg = dict(DEFAULTS[dataset])
             cfg.update(dataset=dataset, loss_type=loss, algorithm=algorithm,
                        aggregator=aggregator, attack=attack, seed=seed,
                        data_dir=args.data_dir, device=args.device,
                        eval_every=args.eval_every,
-                       lr_schedule=args.lr_schedule, lr_min=args.lr_min)
+                       lr_schedule=args.lr_schedule, lr_min=args.lr_min,
+                       attack_kwargs={"tau": args.attack_tau})
             if args.rounds is not None:
                 cfg["rounds"] = args.rounds
             configs.append(cfg)
