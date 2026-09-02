@@ -184,7 +184,7 @@ class ByzantineAttack:
     ----------
     name : str   attack name from _SUPPORTED_ATK
     f    : int   number of Byzantine workers
-    **kw       : attack-specific parameters (e.g. tau=1.5)
+    **kw       : attack-specific parameters (e.g. tau=1.5, epsilon=0)
     """
 
     def __init__(self, name: str, f: int, **kw):
@@ -197,12 +197,13 @@ class ByzantineAttack:
 
     def _build(self, name, f, **kw):
         tau = kw.get("tau", 1.5)
+        epsilon = kw.get("epsilon", 0)
         _map = {
             "SignFlipping":             lambda: _bfl.SignFlipping(),
             "InnerProductManipulation": lambda: _bfl.InnerProductManipulation(tau=tau),
             "ALIE":                     lambda: _bfl.ALittleIsEnough(tau=tau),
             "FallOfEmpires":            lambda: _bfl.FallOfEmpires(f=f, tau=tau),
-            "Mimic":                    lambda: _bfl.Mimic(f=f),
+            "Mimic":                    lambda: _bfl.Mimic(epsilon=epsilon),
             "Zero":                     lambda: None,
             "Random":                   lambda: None,
         }
@@ -232,8 +233,13 @@ class ByzantineAttack:
         elif self.name in ("InnerProductManipulation", "FallOfEmpires"):
             byz = -tau * mean / (mean.norm() + 1e-8) * S.norm(dim=1).max()
         elif self.name == "Mimic":
-            norms = torch.norm(S, dim=1)
-            byz   = S[norms.argmin()].clone()
+            epsilon = self.kw.get("epsilon", 0)
+            if not isinstance(epsilon, int) or not 0 <= epsilon < len(honest):
+                raise ValueError(
+                    "Mimic epsilon must be the zero-based index of an honest "
+                    f"client in [0, {len(honest) - 1}]"
+                )
+            byz = S[epsilon].clone()
         elif self.name == "Zero":
             byz = torch.zeros_like(mean)
         else:  # Random
