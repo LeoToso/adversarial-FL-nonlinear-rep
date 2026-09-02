@@ -165,6 +165,7 @@ class CollinsConfig:
     byzantine_per_round: int = 0
     aggregator: str = "Average"
     attack: str = "SignFlipping"
+    attack_tau: float = 1.5
     batch_size: int = 10
     lr: float = 0.01
     momentum: float = 0.5
@@ -209,7 +210,10 @@ class CollinsFEMNISTTrainer:
         if config.byzantine_per_round:
             self.robust_aggregator = RobustAggregator(
                 config.aggregator, config.byzantine_per_round)
-            self.attack = ByzantineAttack(config.attack, config.byzantine_per_round)
+            self.attack = ByzantineAttack(
+                config.attack, config.byzantine_per_round,
+                tau=config.attack_tau,
+            )
 
     def _aggregate(self, deltas: List[torch.Tensor], weights: List[int]) -> torch.Tensor:
         if self.cfg.byzantine_per_round == 0:
